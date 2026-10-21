@@ -564,3 +564,23 @@ def test_market_data_tool_keeps_complete_okx_swap_bars(monkeypatch):
         interval="1H",
     )
     assert result == complete
+
+
+def test_market_data_tool_disables_row_sampling_for_swap(monkeypatch):
+    import src.tools.market_data_tool as mod
+    from unittest import mock
+
+    calls = []
+    with mock.patch.object(
+        mod, "fetch_market_data_json",
+        side_effect=lambda **kwargs: calls.append(kwargs) or "{}",
+    ):
+        mod.MarketDataTool().execute(
+            codes=["ETH-USDT-SWAP"],
+            start_date="2024-01-01",
+            end_date="2024-01-10",
+            interval="1H",
+            max_rows=8,
+        )
+
+    assert calls[0]["max_rows"] == 0

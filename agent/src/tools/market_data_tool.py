@@ -53,6 +53,7 @@ def _canonicalize_interval(raw: str) -> str | None:
 # silently drop a loader the registry serves. Sorted for a stable schema.
 _SOURCE_ENUM = sorted(VALID_SOURCES)
 
+
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
@@ -234,13 +235,21 @@ class MarketDataTool(BaseTool):
             # behavior here so both surfaces agree.
             max_rows = DEFAULT_MAX_ROWS
 
+        is_perpetual = any(
+            code.upper().endswith(("-USDT-SWAP", "-PERP")) for code in codes
+        )
+        # A cap samples candles and invalidates continuity/funding alignment.
+        # Perpetual bars must therefore remain complete even when the caller
+        # asks for a small preview cap.
+        effective_max_rows = 0 if is_perpetual else max_rows
+
         fetch_kwargs: dict[str, Any] = {
             "codes": codes,
             "start_date": start_date,
             "end_date": end_date,
             "source": source,
             "interval": normalized_interval,
-            "max_rows": max_rows,
+            "max_rows": effective_max_rows,
             "include_provenance": True,
         }
         loader_resolver = kwargs.get("loader_resolver")
@@ -268,9 +277,9 @@ class MarketDataTool(BaseTool):
                                     f"{code} OHLCV was sampled ({bars.get('returned')} of "
                                     f"{bars.get('rows')} rows; policy={bars.get('policy')}). "
                                     "Sampled bars are not a continuous time series and must "
-                                    "not be used for backtesting. Narrow the date range or "
-                                    "use the backtest tool to load the complete perpetual "
-                                    "contract history."
+                                    "not be used for backtesting. Retry with max_rows=0 for "
+                                    "the complete series, narrow the date range, or use the "
+                                    "backtest tool to load the complete perpetual contract history."
                                 ),
                                 "symbol": code,
                                 "truncated": True,

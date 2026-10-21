@@ -1929,6 +1929,12 @@ def get_market_data(
     shifting the price level rather than scaling it, so it is not on the same
     scale as ``split_dividend`` even though both account for dividends.
     """
+    # Perpetual backtests require every candle for cadence and funding
+    # settlement alignment. The general display cap is allowed to sample rows,
+    # which silently destroys that contract, so never cap a native swap here.
+    if any(code.strip().upper().endswith(("-USDT-SWAP", "-PERP")) for code in codes):
+        max_rows = 0
+
     registry = _get_registry()
     return registry.execute(
         "get_market_data",
