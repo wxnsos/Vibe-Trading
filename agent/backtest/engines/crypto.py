@@ -193,7 +193,10 @@ class CryptoEngine(BaseEngine):
                 funding_rate=funding_rate,
                 funding_settlement_time=funding_time,
                 schedule=self._schedule(symbol, bar),
-                source=str(self.config.get("market_risk_source", "ccxt:binanceusdm")),
+                source=str(bar.get(
+                    "market_risk_source",
+                    self.config.get("market_risk_source", f"ccxt:{self.config.get('ccxt_exchange', 'binance')}"),
+                )),
             )
             self._market_risk_sources.add(risks[symbol].source)
         self._risk_frames = risks

@@ -605,7 +605,7 @@ One `get_market_data` call, **29 market-data sources**, one of them the optional
 | `finnhub` · `alphavantage` · `tiingo` · `fmp` | US | key | optional providers |
 | `qveris` | global multi-asset | key · credits | **premium marketplace** — 63+ providers via one key (explicit-only, never in auto fallback) |
 | `nobitex` · `wallex` | crypto (Iranian Toman pairs) | none | public UDF endpoints; **explicit-only** — the only Toman-quoted sources, so they never join the crypto chain where a USD-quoted series could stand in for one |
-| `okx` · `ccxt` · `binance` | crypto | none | OKX + 100+ exchanges + Binance historical / USD-M perps |
+| `okx` · `ccxt` · `binance` | crypto | none for public history | OKX spot and `BASE-USDT-SWAP` history (trade / mark candles + recorded funding settlements), 100+ CCXT exchanges, Binance USD-M perps |
 | `futu` | HK / A | OpenD | optional local FutuOpenD |
 | `mt5` | forex / metals | MT5 terminal | MetaTrader 5 (Exness-style) forex / metal bars, 1m–1D |
 | `tickerall` | forex / metals | key + account (read-only) | same broker MT5 feed, **hosted** — no local terminal, any OS (explicit-only, never in auto fallback) |
@@ -839,7 +839,7 @@ Run `vibe-trading alpha list` to browse, `vibe-trading alpha show <id>` for form
 | **KoreaEquity** | Korea (KRX: KOSPI/KOSDAQ) | long-only, ±30% band judged at execution time on the unified tick grid, 2026 0.20% transaction tax |
 | **VietnamEquity** | Vietnam (HOSE) | long-only, T+2 settlement hold, ±7% band on the 10/50/100-VND tick grid, 100-share lots, 0.1% sell-side tax |
 | **BrazilEquity** | Brazil (B3) | BRL, B3 trading + settlement fees, configurable broker fee, 1- or 100-share lots, R$0.01 tick, shorting allowed |
-| **Crypto** | crypto spot / USD-M perps | funding settlements, execution/mark split |
+| **Crypto** | crypto spot / USDT-margined perps | recorded funding settlements, execution/mark split |
 | **ChinaFutures** · **GlobalFutures** | futures | margin, contract multipliers |
 | **Forex** | FX / metals | via the `mt5` loader (local terminal) or the hosted `tickerall` loader (no terminal, any OS) |
 | **Composite** | cross-market | one shared capital pool across markets (`source="auto"`) |
@@ -848,6 +848,15 @@ Run `vibe-trading alpha list` to browse, `vibe-trading alpha show <id>` for form
 Benchmark selection honors `.SH`, `.SZ`, and `.BJ` A-share suffixes, plus Yahoo's `.SS` spelling for Shanghai, independently of the chosen loader, including offline local sources.
 
 Bars: 1m / 5m / 15m / 30m / 1H / 4H / 1D, plus weekly / monthly (1W / 1M, built from daily bars). 15 metrics + benchmark comparison, **5 portfolio optimizers** (equal-volatility / risk-parity / mean-variance / max-diversification / turnover-aware), and 3 validation tools (Monte Carlo / Bootstrap / Walk-Forward).
+
+For OKX linear perpetual historical runs, use the explicit `BASE-USDT-SWAP`
+symbol (for example `ETH-USDT-SWAP`) and a 1H-or-finer interval so each
+recorded funding settlement can align to a bar. The loader verifies the linear
+USDT-settled market and requires synchronized trade and mark candles plus
+historical funding records. These public history requests do not require API
+credentials; optional OKX API Key, Secret, and Passphrase can be saved under
+**Settings → Data Sources** for future authenticated integrations. The settings
+API reports whether each value is configured and never returns the secret.
 
 The turnover-aware optimizer validates per-name and group caps for single-asset
 allocations too. It preserves feasible supplied allocations (including cash),

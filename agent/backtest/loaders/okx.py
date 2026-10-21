@@ -151,6 +151,22 @@ class DataLoader:
         """
         validate_date_range(start_date, end_date)
 
+        result: Dict[str, pd.DataFrame] = {}
+        swap_codes = [code for code in codes if code.strip().upper().endswith("-SWAP")]
+        if swap_codes:
+            # Keep OKX-native swap instruments on the contract-aware CCXT path
+            # (trade, mark and funding history), never the spot candles API.
+            from backtest.loaders.ccxt_loader import DataLoader as CcxtDataLoader
+
+            result = CcxtDataLoader().fetch(
+                swap_codes, start_date, end_date, interval=interval, fields=fields
+            )
+            spot_codes = [code for code in codes if code not in swap_codes]
+            if not spot_codes:
+                return result
+        else:
+            spot_codes = codes
+
         if fields:
             logger.warning("OKX ignores extra fields: %s", fields)
 
@@ -165,7 +181,7 @@ class DataLoader:
             return {}
         interval = mapped
 
-        codes = [c.replace("/", "-").upper() for c in codes]
+        codes = [c.replace("/", "-").upper() for c in spot_codes]
 
         start_ts = int(pd.Timestamp(start_date).timestamp() * 1000)
         end_ts = int((pd.Timestamp(end_date) + pd.Timedelta(days=1)).timestamp() * 1000)
@@ -181,7 +197,6 @@ class DataLoader:
         use_history = self._should_use_history(start_date)
         session = _okx_session()
 
-        result: Dict[str, pd.DataFrame] = {}
         for symbol in codes:
             try:
                 df = cached_loader_fetch(

@@ -12,10 +12,31 @@ import pandas as pd
 
 import pytest
 
-from backtest.engines._market_hooks import check_crypto_liquidation
+from backtest.engines._market_hooks import calc_crypto_funding_fee, check_crypto_liquidation, _detect_market
 from backtest.engines.composite import CompositeEngine
 from backtest.engines.crypto import CryptoEngine
 from backtest.models import Position
+
+
+def test_okx_swap_is_crypto_and_funding_uses_only_recorded_settlement() -> None:
+    assert _detect_market("ETH-USDT-SWAP") == "crypto"
+    position = Position("ETH-USDT-SWAP", 1, 100.0, pd.Timestamp("2026-01-05"), 2.0, 1.0)
+    frame = pd.Series({
+        "close": 110.0,
+        "funding_rate": 0.001,
+        "funding_settlement_time": pd.NaT,
+    })
+    assert calc_crypto_funding_fee(
+        "ETH-USDT-SWAP", frame, pd.Timestamp("2026-01-05 08:00"),
+        {"ETH-USDT-SWAP": position}, 0.0001, set(), set(), 1.0,
+    ) == 0.0
+
+    settlement = pd.Timestamp("2026-01-05 09:00")
+    frame["funding_settlement_time"] = settlement
+    assert calc_crypto_funding_fee(
+        "ETH-USDT-SWAP", frame, settlement,
+        {"ETH-USDT-SWAP": position}, 0.0001, set(), set(), 1.0,
+    ) == pytest.approx(0.22)
 
 
 def _pos(direction: int, leverage: float = 1.0, entry: float = 100.0, size: float = 10.0) -> Position:

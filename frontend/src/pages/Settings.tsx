@@ -55,6 +55,10 @@ export function Settings() {
   const [clearTushareToken, setClearTushareToken] = useState(false);
   const [gildataToken, setGildataToken] = useState("");
   const [clearGildataToken, setClearGildataToken] = useState(false);
+  const [okxApiKey, setOkxApiKey] = useState("");
+  const [okxSecret, setOkxSecret] = useState("");
+  const [okxPassphrase, setOkxPassphrase] = useState("");
+  const [clearOkxCredentials, setClearOkxCredentials] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [dataSaving, setDataSaving] = useState(false);
@@ -262,6 +266,12 @@ export function Settings() {
         clear_tushare_token: isDesktop ? false : clearTushareToken,
         gildata_token: isDesktop ? undefined : gildataToken.trim() || undefined,
         clear_gildata_token: isDesktop ? false : clearGildataToken,
+        okx_api_key: isDesktop ? undefined : okxApiKey.trim() || undefined,
+        clear_okx_api_key: isDesktop ? false : clearOkxCredentials,
+        okx_secret: isDesktop ? undefined : okxSecret.trim() || undefined,
+        clear_okx_secret: isDesktop ? false : clearOkxCredentials,
+        okx_passphrase: isDesktop ? undefined : okxPassphrase.trim() || undefined,
+        clear_okx_passphrase: isDesktop ? false : clearOkxCredentials,
       });
       if (desktop && (tushareToken.trim() || clearTushareToken)) {
         await desktop.setCredential(
@@ -275,13 +285,19 @@ export function Settings() {
           clearGildataToken ? null : gildataToken.trim(),
         );
       }
+      if (desktop && (okxApiKey.trim() || okxSecret.trim() || okxPassphrase.trim() || clearOkxCredentials)) {
+        for (const [name, value] of [["OKX_API_KEY", okxApiKey], ["OKX_SECRET", okxSecret], ["OKX_PASSPHRASE", okxPassphrase]] as const) {
+          await desktop.setCredential(name, clearOkxCredentials ? null : value.trim() || null);
+        }
+      }
       setDataSettings(updated);
       setTushareToken("");
       setClearTushareToken(false);
       setGildataToken("");
       setClearGildataToken(false);
+      setOkxApiKey(""); setOkxSecret(""); setOkxPassphrase(""); setClearOkxCredentials(false);
       toast.success(t("settings.dataSourceSettingsSaved"));
-      if (desktop && (tushareToken.trim() || clearTushareToken)) {
+      if (desktop && (tushareToken.trim() || clearTushareToken || gildataToken.trim() || clearGildataToken || okxApiKey.trim() || okxSecret.trim() || okxPassphrase.trim() || clearOkxCredentials)) {
         toast.info(t("settings.desktopCredentialRestarting"));
         await desktop.restartBackend();
       }
@@ -689,6 +705,27 @@ export function Settings() {
                 </label>
               </div>
             </label>
+
+            <div className="grid gap-3 rounded-md border p-4">
+              <div>
+                <h3 className="text-sm font-medium">{t("settings.okxCredentials")}</h3>
+                <p className={hintClass}>{t("settings.okxCredentialsDesc")}</p>
+              </div>
+              {[
+                { value: okxApiKey, setValue: setOkxApiKey, label: "settings.okxApiKey", configured: dataSettings.okx_api_key_configured },
+                { value: okxSecret, setValue: setOkxSecret, label: "settings.okxSecret", configured: dataSettings.okx_secret_configured },
+                { value: okxPassphrase, setValue: setOkxPassphrase, label: "settings.okxPassphrase", configured: dataSettings.okx_passphrase_configured },
+              ].map((item) => (
+                <label className="grid gap-2" key={item.label}>
+                  <span className={labelClass}>{t(item.label)}</span>
+                  <input type="password" value={item.value} onChange={(event) => item.setValue(event.target.value)} className={fieldClass} placeholder={item.configured ? t("settings.configured") : t("settings.keepCurrentKey")} autoComplete="new-password" disabled={clearOkxCredentials} />
+                </label>
+              ))}
+              <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                <input type="checkbox" checked={clearOkxCredentials} onChange={(event) => { setClearOkxCredentials(event.target.checked); if (event.target.checked) { setOkxApiKey(""); setOkxSecret(""); setOkxPassphrase(""); } }} className="h-3.5 w-3.5 accent-primary" />
+                {t("settings.clearOkxCredentials")}
+              </label>
+            </div>
 
             <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
               <span className="font-medium text-foreground">{t("settings.saved")}: </span>

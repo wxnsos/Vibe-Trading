@@ -509,7 +509,7 @@ vibe-trading connector install /tmp/my-broker
 | `finnhub` · `alphavantage` · `tiingo` · `fmp` | US | key | optional providers |
 | `qveris` | 全球多资产 | key · credits | **付费市场** — 一把 key 通 63+ 家（仅显式选用，绝不进 auto 链） |
 | `nobitex` · `wallex` | 加密（伊朗托曼计价对） | 无 | 公开 UDF 端点；**仅显式选用** —— 它们是唯二以托曼计价的源，绝不进 crypto 链，以免用 USDT 计价的序列冒名顶替 |
-| `okx` · `ccxt` · `binance` | crypto | none | OKX + 100+ exchanges + Binance 历史 / USD-M 永续 |
+| `okx` · `ccxt` · `binance` | crypto | 公共历史数据无需密钥 | OKX 现货与 `BASE-USDT-SWAP` 历史（成交价 / 标记价 K 线 + 历史资金费率结算）、100+ CCXT 交易所、Binance USD-M 永续 |
 | `futu` | HK / A | OpenD | optional local FutuOpenD |
 | `mt5` | 外汇 / 贵金属 | MT5 终端 | MetaTrader 5（Exness 风格）外汇 / 贵金属行情，1m–1D |
 | `tickerall` | 外汇 / 贵金属 | key + 账户（只读） | 同一家券商的 MT5 数据源，**托管** —— 无需本地终端，任意操作系统（仅显式选用，绝不进 auto 链） |
@@ -726,13 +726,15 @@ LONGBRIDGE_ACCESS_TOKEN=...
 | **KoreaEquity** | 韩国（KRX：KOSPI/KOSDAQ） | 只做多，统一最小价位网格上于成交时刻判定 ±30% 涨跌停，2026 年 0.20% 证券交易税 |
 | **VietnamEquity** | 越南（HOSE） | 只做多，T+2 交收锁定，10/50/100 越南盾最小价位网格上 ±7% 涨跌停，100 股整手，0.1% 卖出方税 |
 | **BrazilEquity** | Brazil (B3) | BRL, B3 trading + settlement fees, configurable broker fee, 1- or 100-share lots, R$0.01 tick, shorting allowed |
-| **Crypto** | 加密现货 / USD-M 永续 | 资金费结算、成交价/标记价分离 |
+| **Crypto** | 加密现货 / USDT 本位永续 | 历史资金费率结算、成交价/标记价分离 |
 | **ChinaFutures** · **GlobalFutures** | 期货 | 保证金、合约乘数 |
 | **Forex** | 外汇 / 贵金属 | 经 `mt5` loader |
 | **Composite** | 跨市场 | 跨市场共享单一资金池（`source="auto"`） |
 | **options_portfolio** | 期权 | 多腿、Greeks、payoff/scenario |
 
 Bar 周期：1m / 5m / 15m / 30m / 1H / 4H / 1D，以及由日线合成的周线 / 月线（1W / 1M）。15 项指标 + benchmark 对比，**5 个组合优化器**（equal-volatility / risk-parity / mean-variance / max-diversification / turnover-aware），以及 3 个验证工具（Monte Carlo / Bootstrap / Walk-Forward）。
+
+OKX 线性永续历史回测请使用 `BASE-USDT-SWAP` 标的（例如 `ETH-USDT-SWAP`），并选择 1H 或更短周期，确保历史资金费结算能与 K 线时间对齐。加载器会核验 USDT 结算线性合约，并要求成交价、标记价 K 线和历史资金费率记录可对齐。读取公开历史数据无需 API 凭证；后续需要鉴权的集成可在 **设置 → 数据源** 保存 OKX API Key、Secret 和 Passphrase。设置 API 只返回是否已配置，不返回密钥内容。
 
 </details>
 

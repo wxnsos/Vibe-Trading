@@ -54,19 +54,20 @@ _TIMEFRAME_DELTA = {
 # scheduling is delegated to :mod:`backtest.loaders.base`.
 _CCXT_TIMEOUT_MS = positive_env_int("CCXT_TIMEOUT_MS", 15_000)
 _CCXT_FETCH_BUDGET_S = positive_env_float("CCXT_FETCH_BUDGET_S", 60.0)
-_FUNDING_HOURS = {0, 8, 16}
+_FUNDING_HOURS = {0, 8, 16}  # Binance legacy schedule; OKX uses recorded events.
 
 
 def _parse_ccxt_symbol(code: str) -> tuple[str, str]:
     """Return the canonical CCXT symbol and instrument type for ``code``."""
     normalized = code.strip().upper()
-    if normalized.endswith("-PERP"):
-        match = re.fullmatch(r"([A-Z0-9]+)-USDT-PERP", normalized)
+    if normalized.endswith(("-PERP", "-SWAP")):
+        suffix = "-SWAP" if normalized.endswith("-SWAP") else "-PERP"
+        match = re.fullmatch(rf"([A-Z0-9]+)-USDT{suffix}", normalized)
         if match is None:
             raise ValueError(
-                "USD-M perpetual symbol must use BASE-USDT-PERP, e.g. BTC-USDT-PERP"
+                "USD-M perpetual symbol must use BASE-USDT-PERP or BASE-USDT-SWAP"
             )
-        return f"{match.group(1)}/USDT:USDT", "swap"
+        return f"{match.group(1)}/USDT:USDT", "okx_swap" if suffix == "-SWAP" else "swap"
     return normalized.replace("-", "/"), "spot"
 
 
@@ -201,16 +202,14 @@ class DataLoader:
         pass
 
     def _get_exchange(self, instrument_type: str = "spot"):
-        """Create an exchange instance for spot or Binance USD-M swaps."""
+        """Create an exchange instance for spot or configured USDT swaps."""
         import ccxt
         from src.config.accessor import get_env_config
 
         exchange_id = get_env_config().data.ccxt_exchange.lower()
-        if instrument_type == "swap":
-            if exchange_id not in {"binance", "binanceusdm"}:
-                raise ValueError(
-                    "BASE-USDT-PERP currently requires CCXT_EXCHANGE=binance"
-                )
+        if instrument_type == "okx_swap":
+            exchange_id = "okx"
+        elif instrument_type == "swap" and exchange_id in {"binance", "binanceusdm"}:
             exchange_id = "binanceusdm"
         exchange_cls = getattr(ccxt, exchange_id, None)
         if exchange_cls is None:
@@ -281,9 +280,10 @@ class DataLoader:
                 artifact = (bracket_artifacts or {}).get(code)
 
                 def fetch_frame():
-                    if instrument_type == "swap":
+                    if instrument_type in {"swap", "okx_swap"}:
                         return self._fetch_perpetual(
                             exchange, ccxt_symbol, timeframe, since_ms, end_ms,
+                            is_okx=instrument_type == "okx_swap",
                             bracket_artifact=artifact, require_brackets=require_brackets,
                         )
                     return self._fetch_one(
@@ -302,7 +302,7 @@ class DataLoader:
                 if df is not None and not df.empty:
                     result[code] = df
             except Exception as exc:
-                if instrument_type == "swap" or code.strip().upper().endswith("-PERP"):
+                if instrument_type in {"swap", "okx_swap"} or code.strip().upper().endswith(("-PERP", "-SWAP")):
                     raise
                 logger.warning("CCXT failed for %s: %s", code, exc)
         return result
@@ -310,7 +310,7 @@ class DataLoader:
     @classmethod
     def _fetch_perpetual(
         cls, exchange, symbol: str, timeframe: str, since_ms: int, end_ms: int,
-        *, bracket_artifact: dict | None = None, require_brackets: bool = False,
+        *, is_okx: bool = False, bracket_artifact: dict | None = None, require_brackets: bool = False,
     ) -> pd.DataFrame:
         """Fetch aligned trade-price and mark-price candles for one USD-M swap.
 
@@ -328,6 +328,12 @@ class DataLoader:
                 "artifact via DataLoader.fetch(bracket_artifacts={code: artifact})."
             )
 
+        if hasattr(exchange, "load_markets"):
+            markets = exchange.load_markets()
+            market = markets.get(symbol)
+            if not market or not market.get("swap") or not market.get("linear") or market.get("settle") != "USDT":
+                raise ValueError(f"{symbol} is not a verified linear USDT-settled perpetual swap")
+
         trade = cls._fetch_one(exchange, symbol, timeframe, since_ms, end_ms)
         mark = cls._fetch_one(
             exchange,
@@ -341,20 +347,27 @@ class DataLoader:
             raise ValueError(f"mark-price timestamps are incomplete or unsynchronized for {symbol}")
 
         result = trade.copy()
+        result["market_risk_source"] = f"ccxt:{'okx' if is_okx else getattr(exchange, 'id', 'binanceusdm')}"
         result["execution_open"] = trade["open"]
         for column in ("open", "high", "low", "close"):
             result[f"mark_{column}"] = mark[column]
 
-        funding = cls._fetch_funding_history(exchange, symbol, since_ms, end_ms)
+        funding = cls._fetch_funding_history(exchange, symbol, since_ms, end_ms, is_okx=is_okx)
+        if funding.empty:
+            raise ValueError(f"historical funding settlement data is unavailable for {symbol}")
         if funding.index.has_duplicates:
             raise ValueError(f"duplicate funding settlement for {symbol}")
-        required = result.index[result.index.hour.isin(_FUNDING_HOURS)]
-        missing = required.difference(funding.index)
-        if not missing.empty:
-            raise ValueError(
-                f"funding settlement data is missing for {symbol}: "
-                f"{', '.join(str(ts) for ts in missing)}"
-            )
+        if not is_okx:
+            required = result.index[result.index.hour.isin(_FUNDING_HOURS)]
+            missing = required.difference(funding.index)
+            if not missing.empty:
+                raise ValueError(
+                    f"funding settlement data is missing for {symbol}: "
+                    f"{', '.join(str(ts) for ts in missing)}"
+                )
+        outside = funding.index.difference(result.index)
+        if not outside.empty:
+            raise ValueError(f"funding settlement cannot be aligned to candles for {symbol}")
 
         result["funding_rate"] = 0.0
         result["funding_settlement_time"] = pd.NaT
@@ -373,14 +386,14 @@ class DataLoader:
 
     @staticmethod
     def _fetch_funding_history(
-        exchange, symbol: str, since_ms: int, end_ms: int,
+        exchange, symbol: str, since_ms: int, end_ms: int, *, is_okx: bool = False,
     ) -> pd.DataFrame:
         """Fetch bounded historical funding settlements for one USD-M swap."""
         import ccxt
 
         rows: list[dict] = []
         cursor = since_ms
-        limit = 1000
+        limit = 100 if is_okx else 1000
         deadline = time.monotonic() + _CCXT_FETCH_BUDGET_S
         label = f"ccxt funding fetch for {symbol}"
 
@@ -409,9 +422,8 @@ class DataLoader:
             )
 
         frame = pd.DataFrame({
-            # Binance settlement timestamps carry millisecond jitter
-            # (e.g. 08:00:00.011); round to the second so they align with
-            # bar timestamps instead of failing the missing-settlement check.
+            # Venues may return millisecond jitter around settlement time.
+            # Round to the second; the event still must align to an hourly bar.
             "trade_date": pd.to_datetime(
                 [row["timestamp"] for row in rows], unit="ms"
             ).round("s"),
@@ -438,12 +450,15 @@ class DataLoader:
 
         all_rows: list = []
         cursor = since_ms
-        limit = 1000
+        # OKX caps candle pages at 100 records. Asking for 1000 makes its
+        # short response look like end-of-history and silently truncates runs.
+        limit = 100 if getattr(exchange, "id", "") == "okx" else 1000
         deadline = time.monotonic() + _CCXT_FETCH_BUDGET_S
         label = f"ccxt fetch for {symbol}"
         hit_page_cap = True
+        page_cap = 2_000 if getattr(exchange, "id", "") == "okx" else 200
 
-        for _ in range(200):
+        for _ in range(page_cap):
             check_budget(deadline, label, budget_s=_CCXT_FETCH_BUDGET_S)
             # ``ccxt.NetworkError`` covers RequestTimeout / DDoSProtection /
             # ExchangeNotAvailable — the transient family. Anything else
@@ -451,6 +466,13 @@ class DataLoader:
             def fetch_page():
                 kwargs = {"since": cursor, "limit": limit}
                 if params is not None:
+                    if params.get("price") == "mark" and getattr(exchange, "id", "") == "okx":
+                        fetch_mark_ohlcv = getattr(exchange, "fetch_mark_ohlcv", None)
+                        if not callable(fetch_mark_ohlcv):
+                            raise ValueError(
+                                "installed CCXT OKX adapter does not support mark-price candles"
+                            )
+                        return fetch_mark_ohlcv(symbol, timeframe, **kwargs)
                     kwargs["params"] = params
                 return exchange.fetch_ohlcv(symbol, timeframe, **kwargs)
 

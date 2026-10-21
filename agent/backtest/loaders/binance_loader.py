@@ -32,6 +32,8 @@ class DataLoader(CcxtDataLoader):
         """Always use Binance spot or Binance USD-M (swap), ignore CCXT_EXCHANGE."""
         import ccxt
 
+        if instrument_type == "okx_swap":
+            raise ValueError("BASE-USDT-SWAP is an OKX instrument; use source='okx' or source='ccxt'")
         if instrument_type == "swap":
             exchange_cls = ccxt.binanceusdm
         else:

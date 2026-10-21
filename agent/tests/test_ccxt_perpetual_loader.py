@@ -35,6 +35,7 @@ class _PerpetualExchange:
         mark_rows: list[list[float]] | None = None,
         funding_rows: list[dict[str, object]] | None = None,
     ) -> None:
+        self.id = "okx"
         self.trade_rows = _hourly_rows([100.0, 101.0])
         self.mark_rows = mark_rows if mark_rows is not None else _hourly_rows([99.0, 100.0])
         start = int(pd.Timestamp("2024-01-01 00:00:00").timestamp() * 1000)
@@ -54,6 +55,9 @@ class _PerpetualExchange:
             "params": params,
         })
         return self.mark_rows if params == {"price": "mark"} else self.trade_rows
+
+    def fetch_mark_ohlcv(self, symbol, timeframe, since=None, limit=None):
+        return self.fetch_ohlcv(symbol, timeframe, since=since, limit=limit, params={"price": "mark"})
 
     def fetch_funding_rate_history(self, symbol, since=None, limit=None):
         self.calls.append({
@@ -107,6 +111,10 @@ def test_spot_symbol_keeps_existing_ccxt_contract() -> None:
 
 def test_perpetual_symbol_maps_to_binance_usdm_contract() -> None:
     assert _parse_ccxt_symbol("BTC-USDT-PERP") == ("BTC/USDT:USDT", "swap")
+
+
+def test_okx_swap_symbol_maps_to_unified_contract() -> None:
+    assert _parse_ccxt_symbol("ETH-USDT-SWAP") == ("ETH/USDT:USDT", "okx_swap")
 
 
 @pytest.mark.parametrize("code", ["BTC-PERP", "-USDT-PERP", "BTC--PERP"])
@@ -184,6 +192,23 @@ def test_perpetual_fetch_aligns_explicit_zero_funding_settlement(monkeypatch) ->
     assert frame["funding_rate"].tolist() == [0.0, 0.0]
     assert frame["funding_settlement_time"].iloc[0] == pd.Timestamp("2024-01-01")
     assert pd.isna(frame["funding_settlement_time"].iloc[1])
+
+
+def test_okx_swap_accepts_recorded_dynamic_settlement_time(monkeypatch) -> None:
+    settlement = int(pd.Timestamp("2024-01-01 01:00:00").timestamp() * 1000)
+    exchange = _PerpetualExchange(funding_rows=[{"timestamp": settlement, "fundingRate": 0.0003}])
+    monkeypatch.setattr(
+        "backtest.loaders.ccxt_loader.DataLoader._get_exchange",
+        lambda _self, instrument_type="spot": exchange,
+    )
+
+    from backtest.loaders.ccxt_loader import DataLoader
+
+    frame = DataLoader().fetch(
+        ["ETH-USDT-SWAP"], "2024-01-01", "2024-01-01", interval="1H"
+    )["ETH-USDT-SWAP"]
+    assert frame.loc[pd.Timestamp("2024-01-01 01:00:00"), "funding_rate"] == 0.0003
+    assert frame.loc[pd.Timestamp("2024-01-01 01:00:00"), "funding_settlement_time"] == pd.Timestamp("2024-01-01 01:00:00")
 
 
 def test_perpetual_fetch_rejects_missing_required_funding_settlement(monkeypatch) -> None:

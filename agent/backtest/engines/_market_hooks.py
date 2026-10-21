@@ -129,6 +129,7 @@ _MARKET_PATTERNS = [
     # zero_size rejection (#1863). Base alphabet matches the loader's own
     # ``([A-Z0-9]+)-USDT-PERP`` fullmatch.
     (re.compile(r"^[A-Z0-9]+-USDT-PERP$", re.I), "crypto"),
+    (re.compile(r"^[A-Z0-9]+-USDT-SWAP$", re.I), "crypto"),
     # yfinance's native crypto spelling (BTC-USD, ETH-USD). Distinct from
     # USDT pairs only in the quote currency; both belong to CryptoEngine.
     (re.compile(r"^(?=[A-Z0-9]*[A-Z])[A-Z0-9]+-USD$", re.I), "crypto"),
@@ -494,12 +495,10 @@ def calc_crypto_funding_fee(
             carries no historical ``funding_rate`` column.
         applied_set: (symbol, date, hour) dedup set — mutated.
         daily_done_set: (symbol, date) dedup set — mutated.
-        bar_span_hours: Bar span in hours when known. At 8h or wider the
-            settlement count comes from the span (``max(1, span // 8)`` per
-            bar), because a daily bar can never land on the 8h/16h slots:
-            without this a daily-bar run charges a third of the documented
-            funding model (#1290). Narrower bars keep the slot logic below
-            unchanged.
+        bar_span_hours: Bar span in hours when known. Used only by the legacy
+            fixed-rate fallback when the bar has no settlement-event column.
+            Historical event data is charged only on its recorded settlement
+            timestamps, regardless of venue cadence.
 
     Returns:
         Fee amount (positive = longs pay, negative = longs receive).
@@ -510,23 +509,31 @@ def calc_crypto_funding_fee(
     current_date = timestamp.date()
     hour = timestamp.hour if hasattr(timestamp, "hour") else 0
 
-    settlements = 1
-    if bar_span_hours is not None and bar_span_hours >= 8:
-        settlements = max(1, int(bar_span_hours // 8))
-        key = (symbol, current_date, hour)
-        if key in applied_set:
+    # When a loader supplies the settlement event timestamp, charge only on
+    # that exact bar. This supports venues whose funding cadence changes.
+    has_settlement_events = "funding_settlement_time" in bar.index
+    settlement = bar.get("funding_settlement_time")
+    if has_settlement_events:
+        if settlement is None or pd.isna(settlement) or pd.Timestamp(settlement) != pd.Timestamp(timestamp):
             return 0.0
-        applied_set.add(key)
-    elif hour in FUNDING_HOURS:
-        key = (symbol, current_date, hour)
-        if key in applied_set:
-            return 0.0
-        applied_set.add(key)
+        settlements = 1
     else:
-        day_key = (symbol, current_date)
-        if day_key in daily_done_set:
-            return 0.0
-        daily_done_set.add(day_key)
+        if bar_span_hours is not None and bar_span_hours >= 8:
+            settlements = max(1, int(bar_span_hours // 8))
+            key = (symbol, current_date, hour)
+            if key in applied_set:
+                return 0.0
+            applied_set.add(key)
+        elif hour in FUNDING_HOURS:
+            key = (symbol, current_date, hour)
+            if key in applied_set:
+                return 0.0
+            applied_set.add(key)
+        else:
+            day_key = (symbol, current_date)
+            if day_key in daily_done_set:
+                return 0.0
+            daily_done_set.add(day_key)
 
     pos = positions.get(symbol)
     if pos is None:

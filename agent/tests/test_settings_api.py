@@ -560,6 +560,24 @@ def test_update_data_source_settings_persists_gildata_token(
     assert cleared.json()["gildata_token_configured"] is False
 
 
+def test_okx_credentials_are_saved_but_never_returned(client: TestClient, tmp_path: Path) -> None:
+    response = client.put("/settings/data-sources", json={
+        "okx_api_key": "okx-key-secret",
+        "okx_secret": "okx-signing-secret",
+        "okx_passphrase": "okx-pass-secret",
+    })
+    assert response.status_code == 200
+    body = response.json()
+    assert body["okx_api_key_configured"] is True
+    assert body["okx_secret_configured"] is True
+    assert body["okx_passphrase_configured"] is True
+    assert "okx-key-secret" not in response.text
+    env_text = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert "OKX_API_KEY=okx-key-secret" in env_text
+    assert "OKX_SECRET=okx-signing-secret" in env_text
+    assert "OKX_PASSPHRASE=okx-pass-secret" in env_text
+
+
 def test_desktop_secure_mode_never_persists_injected_tushare_token(
     client: TestClient,
     tmp_path: Path,

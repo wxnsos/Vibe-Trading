@@ -998,6 +998,9 @@ export interface DataSourceSettings {
   tushare_token_hint?: string | null;
   gildata_token_configured: boolean;
   gildata_token_hint?: string | null;
+  okx_api_key_configured: boolean;
+  okx_secret_configured: boolean;
+  okx_passphrase_configured: boolean;
   baostock_supported: boolean;
   baostock_installed: boolean;
   baostock_message: string;
@@ -1010,6 +1013,12 @@ export interface UpdateDataSourceSettingsRequest {
   clear_tushare_token?: boolean;
   gildata_token?: string;
   clear_gildata_token?: boolean;
+  okx_api_key?: string;
+  clear_okx_api_key?: boolean;
+  okx_secret?: string;
+  clear_okx_secret?: boolean;
+  okx_passphrase?: string;
+  clear_okx_passphrase?: boolean;
   source_orders?: SourceOrderUpdate[];
 }
 

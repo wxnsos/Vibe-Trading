@@ -216,6 +216,9 @@ class DataConfig(_EnvBase):
 
     tushare_token: str = Field(alias="TUSHARE_TOKEN", default="")
     ccxt_exchange: str = Field(alias="CCXT_EXCHANGE", default="binance")
+    okx_api_key: str = Field(alias="OKX_API_KEY", default="")
+    okx_secret: str = Field(alias="OKX_SECRET", default="")
+    okx_passphrase: str = Field(alias="OKX_PASSPHRASE", default="")
     ccxt_timeout_ms: int = Field(alias="CCXT_TIMEOUT_MS", default=15000)
     ccxt_fetch_budget_s: float = Field(alias="CCXT_FETCH_BUDGET_S", default=60.0)
     futu_host: str = Field(alias="FUTU_HOST", default="127.0.0.1")

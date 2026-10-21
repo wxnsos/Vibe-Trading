@@ -141,6 +141,9 @@ class DataSourceSettingsResponse(BaseModel):
     tushare_token_hint: Optional[str] = None
     gildata_token_configured: bool
     gildata_token_hint: Optional[str] = None
+    okx_api_key_configured: bool
+    okx_secret_configured: bool
+    okx_passphrase_configured: bool
     baostock_supported: bool
     baostock_installed: bool
     baostock_message: str
@@ -155,6 +158,12 @@ class UpdateDataSourceSettingsRequest(BaseModel):
     clear_tushare_token: bool = False
     gildata_token: Optional[str] = None
     clear_gildata_token: bool = False
+    okx_api_key: Optional[str] = None
+    clear_okx_api_key: bool = False
+    okx_secret: Optional[str] = None
+    clear_okx_secret: bool = False
+    okx_passphrase: Optional[str] = None
+    clear_okx_passphrase: bool = False
     source_orders: Optional[List[SourceOrderUpdate]] = None
 
 
@@ -188,11 +197,12 @@ LLM_PROVIDER_BY_NAME = {provider.name: provider for provider in LLM_PROVIDERS}
 LLM_API_KEY_PLACEHOLDERS = {"", "sk-or-v1-your-key-here", "sk-xxx", "xxx", "gsk_xxx"}
 TUSHARE_TOKEN_PLACEHOLDERS = {"", "your-tushare-token"}
 GILDATA_TOKEN_PLACEHOLDERS = {"", "your-gildata-token"}
+OKX_SECRET_PLACEHOLDERS = {"", "your-okx-api-key", "your-okx-secret", "your-okx-passphrase"}
 
 
 def _desktop_secure_credential_names() -> set[str]:
     """Return secrets owned by the desktop host when secure storage is active."""
-    names = {"TUSHARE_TOKEN", "QVERIS_API_KEY", "GILDATA_TOKEN"}
+    names = {"TUSHARE_TOKEN", "QVERIS_API_KEY", "GILDATA_TOKEN", "OKX_API_KEY", "OKX_SECRET", "OKX_PASSPHRASE"}
     names.update(
         provider.api_key_env for provider in LLM_PROVIDERS if provider.api_key_env
     )
@@ -562,6 +572,10 @@ def _build_data_source_settings_response(
     token_configured = host._is_configured_secret(token, TUSHARE_TOKEN_PLACEHOLDERS)
     gildata = env_values.get("GILDATA_TOKEN", "")
     gildata_configured = host._is_configured_secret(gildata, GILDATA_TOKEN_PLACEHOLDERS)
+    okx_configured = {
+        key.lower(): host._is_configured_secret(env_values.get(key, ""), OKX_SECRET_PLACEHOLDERS)
+        for key in ("OKX_API_KEY", "OKX_SECRET", "OKX_PASSPHRASE")
+    }
     # Late-access baostock helpers for monkeypatch compat.
     baostock_sup = getattr(host, "_baostock_supported", _baostock_supported)
     baostock_ins = getattr(host, "_baostock_installed", _baostock_installed)
@@ -578,6 +592,9 @@ def _build_data_source_settings_response(
         tushare_token_hint=None,
         gildata_token_configured=gildata_configured,
         gildata_token_hint=None,
+        okx_api_key_configured=okx_configured["okx_api_key"],
+        okx_secret_configured=okx_configured["okx_secret"],
+        okx_passphrase_configured=okx_configured["okx_passphrase"],
         baostock_supported=supported,
         baostock_installed=installed,
         baostock_message=baostock_message,
@@ -878,6 +895,14 @@ def register_settings_routes(
         elif "GILDATA_TOKEN" in current_values:
             updates["GILDATA_TOKEN"] = current_values["GILDATA_TOKEN"]
 
+        for field, env_name in (("okx_api_key", "OKX_API_KEY"), ("okx_secret", "OKX_SECRET"), ("okx_passphrase", "OKX_PASSPHRASE")):
+            if getattr(payload, f"clear_{field}"):
+                updates[env_name] = ""
+            elif getattr(payload, field) is not None and getattr(payload, field).strip():
+                updates[env_name] = getattr(payload, field).strip()
+            elif env_name in current_values:
+                updates[env_name] = current_values[env_name]
+
         # Per-market source-order overrides: validate first (400 on a bad
         # permutation *before* anything is persisted), then merge only the
         # entries that actually change the dotenv (no-op saves don't grow
@@ -903,6 +928,12 @@ def register_settings_routes(
                 os.environ["GILDATA_TOKEN"] = gildata_token
             else:
                 os.environ.pop("GILDATA_TOKEN", None)
+            for env_name in ("OKX_API_KEY", "OKX_SECRET", "OKX_PASSPHRASE"):
+                value = updates.get(env_name, "").strip()
+                if host_ref._is_configured_secret(value, OKX_SECRET_PLACEHOLDERS):
+                    os.environ[env_name] = value
+                else:
+                    os.environ.pop(env_name, None)
             # Hot-apply source-order overrides in this process.
             for env_var, value in order_updates.items():
                 if value:
