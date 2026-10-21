@@ -259,9 +259,6 @@ class DataLoader:
         validate_date_range(start_date, end_date)
 
         timeframe = _INTERVAL_MAP.get(interval, "1d")
-        since_ms = int(pd.Timestamp(start_date).timestamp() * 1000)
-        end_ms = int((pd.Timestamp(end_date) + pd.Timedelta(days=1)).timestamp() * 1000)
-
         # Build the exchange lazily so a full cache hit never imports ccxt or
         # opens an exchange object.
         exchange_holder: Dict[str, object] = {}
@@ -279,7 +276,9 @@ class DataLoader:
                 exchange = get_exchange(instrument_type)
                 artifact = (bracket_artifacts or {}).get(code)
 
-                def fetch_frame():
+                def fetch_window(window_start: str, window_end: str):
+                    since_ms = int(pd.Timestamp(window_start).timestamp() * 1000)
+                    end_ms = int((pd.Timestamp(window_end) + pd.Timedelta(days=1)).timestamp() * 1000)
                     if instrument_type in {"swap", "okx_swap"}:
                         return self._fetch_perpetual(
                             exchange, ccxt_symbol, timeframe, since_ms, end_ms,
@@ -297,7 +296,8 @@ class DataLoader:
                     start_date=start_date,
                     end_date=end_date,
                     fields=None,
-                    fetch=fetch_frame,
+                    fetch=lambda: fetch_window(start_date, end_date),
+                    fetch_range=fetch_window,
                 )
                 if df is not None and not df.empty:
                     result[code] = df

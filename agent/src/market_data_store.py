@@ -13,7 +13,7 @@ import json
 import logging
 import sqlite3
 from contextlib import contextmanager
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -124,10 +124,28 @@ class MarketDataStore:
     def put(self, *, source, symbol, timeframe, start_date, end_date, fields=None,
             source_revision=None, frame: pd.DataFrame | None) -> None:
         if (
-            end_date >= date.today().isoformat() or frame is None or frame.empty
-            or not isinstance(frame, pd.DataFrame) or frame.index.nlevels != 1
+            frame is None or frame.empty or not isinstance(frame, pd.DataFrame)
+            or frame.index.nlevels != 1
         ):
             return
+        # A request that ends today often includes a still-forming candle. Keep
+        # the settled history it returned, but key that payload only through
+        # yesterday so it can never masquerade as a complete current-day range.
+        today = date.today()
+        requested_end = date.fromisoformat(end_date)
+        stored_end = min(requested_end, today - timedelta(days=1))
+        if requested_end >= today:
+            if not isinstance(frame.index, pd.DatetimeIndex):
+                return
+            cutoff = pd.Timestamp(today.isoformat())
+            if frame.index.tz is not None:
+                cutoff = cutoff.tz_localize(frame.index.tz)
+            frame = frame.loc[frame.index < cutoff].copy()
+            if frame.empty:
+                return
+        if date.fromisoformat(start_date) > stored_end:
+            return
+        end_date = stored_end.isoformat()
         key, fields_json = self._key(source, symbol, timeframe, start_date, end_date, fields, source_revision)
         try:
             index_type = "datetime" if isinstance(frame.index, pd.DatetimeIndex) else "other"

@@ -645,6 +645,7 @@ def cached_loader_fetch(
     end_date: str,
     fields: list[str] | tuple[str, ...] | None,
     fetch: Callable[[], pd.DataFrame | None],
+    fetch_range: Callable[[str, str], pd.DataFrame | None] | None = None,
     source_revision: str | None = None,
 ) -> pd.DataFrame | None:
     """Fetch a DataFrame through the persistent SQLite and optional Parquet caches.
@@ -665,6 +666,51 @@ def cached_loader_fetch(
         )
         if cached is not None:
             return cached
+
+        # Recent-range requests commonly end today. The store deliberately
+        # keeps only settled bars through yesterday for those requests. Reuse
+        # that historical prefix and refresh the unsettled tail instead of
+        # downloading the entire range again when the loader supports windows.
+        today = dt.date.today()
+        yesterday = today - dt.timedelta(days=1)
+        if (
+            fetch_range is not None
+            and end_date >= today.isoformat()
+            and dt.date.fromisoformat(start_date) <= yesterday
+        ):
+            prefix = store.get(
+                source=source, symbol=symbol, timeframe=timeframe,
+                start_date=start_date, end_date=yesterday.isoformat(), fields=fields,
+                source_revision=source_revision,
+            )
+            if prefix is not None:
+                tail_start = (yesterday + dt.timedelta(days=1)).isoformat()
+                try:
+                    tail = fetch_range(tail_start, end_date)
+                    frames = [prefix]
+                    if isinstance(tail, pd.DataFrame) and not tail.empty:
+                        frames.append(tail)
+                    combined = pd.concat(frames).sort_index()
+                    combined = combined.loc[~combined.index.duplicated(keep="last")]
+                    combined.attrs.update(prefix.attrs)
+                    if isinstance(tail, pd.DataFrame):
+                        combined.attrs.update(tail.attrs)
+                    store.put(
+                        source=source, symbol=symbol, timeframe=timeframe,
+                        start_date=start_date, end_date=end_date, fields=fields,
+                        source_revision=source_revision, frame=combined,
+                    )
+                    loader_cache_put(
+                        source=source, symbol=symbol, timeframe=timeframe,
+                        start_date=start_date, end_date=end_date, fields=fields,
+                        source_revision=source_revision, frame=combined,
+                    )
+                    return combined
+                except Exception as exc:  # noqa: BLE001 — full fetch remains the fallback
+                    logger.warning(
+                        "market data cache tail refresh failed for %s %s; fetching full range: %s",
+                        source, symbol, exc,
+                    )
     except Exception as exc:
         logger.warning("market data SQLite cache unavailable; falling back to fetch: %s", exc)
         store = None
