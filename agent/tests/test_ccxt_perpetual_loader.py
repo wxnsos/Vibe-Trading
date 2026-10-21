@@ -220,9 +220,12 @@ def test_perpetual_fetch_rejects_missing_required_funding_settlement(monkeypatch
 
     from backtest.loaders.ccxt_loader import DataLoader
 
-    with pytest.raises(ValueError, match="funding settlement"):
+    with pytest.raises(
+        ValueError,
+        match=r"OKX public funding-rate history returned no settlement records.*\[2024-01-01, 2024-01-01\]",
+    ):
         DataLoader().fetch(
-            ["BTC-USDT-PERP"], "2024-01-01", "2024-01-01", interval="1H"
+            ["ETH-USDT-SWAP"], "2024-01-01", "2024-01-01", interval="1H"
         )
 
 

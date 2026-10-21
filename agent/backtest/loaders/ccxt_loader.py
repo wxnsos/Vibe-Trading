@@ -354,7 +354,16 @@ class DataLoader:
 
         funding = cls._fetch_funding_history(exchange, symbol, since_ms, end_ms, is_okx=is_okx)
         if funding.empty:
-            raise ValueError(f"historical funding settlement data is unavailable for {symbol}")
+            start_label = pd.Timestamp(since_ms, unit="ms").strftime("%Y-%m-%d")
+            end_label = (pd.Timestamp(end_ms, unit="ms") - pd.Timedelta(milliseconds=1)).strftime("%Y-%m-%d")
+            venue = "OKX public funding-rate history" if is_okx else "exchange funding-rate history"
+            raise ValueError(
+                f"{venue} returned no settlement records for {symbol} in "
+                f"[{start_label}, {end_label}]; perpetual backtest stopped because "
+                "funding costs cannot be verified for the requested period. "
+                "Choose a period covered by the venue's funding history or provide "
+                "a validated historical funding dataset."
+            )
         if funding.index.has_duplicates:
             raise ValueError(f"duplicate funding settlement for {symbol}")
         if not is_okx:
