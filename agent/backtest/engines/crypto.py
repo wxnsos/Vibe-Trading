@@ -10,6 +10,7 @@ Market rules:
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any
 
@@ -79,6 +80,7 @@ class CryptoEngine(BaseEngine):
         self._isolated_margins: dict[str, float] = {}
         self._schedule_cache: dict[tuple[str, str], MaintenanceSchedule] = {}
         self._risk_frames: dict[str, MarketRiskFrame] = {}
+        self._contract_metadata: dict[str, dict[str, Any]] = {}
         self._blocked_symbols: set[str] = set()
         self._rebalance_risk_checked = False
         self._funding_applied: set = set()   # (symbol, date, hour) — per-slot dedup
@@ -113,7 +115,19 @@ class CryptoEngine(BaseEngine):
         return not (self.perpetual_strict and symbol in self._blocked_symbols)
 
     def round_size(self, raw_size: float, price: float) -> float:
-        """Crypto supports fractional sizes, round to 6 decimals."""
+        """Round base-asset quantity to the exchange contract amount grid."""
+        del price
+        symbol = getattr(self, "_active_symbol", None)
+        metadata = self._contract_metadata.get(symbol) if symbol else None
+        if self.perpetual_strict and metadata is not None:
+            contract_size = metadata["contract_size_base"]
+            amount_step = metadata["contract_amount_step"]
+            minimum_contracts = metadata["contract_min_amount"]
+            contracts = raw_size / contract_size
+            contracts = math.floor(contracts / amount_step + 1e-12) * amount_step
+            if contracts + 1e-12 < minimum_contracts:
+                return 0.0
+            return round(contracts * contract_size, 12)
         return round(max(raw_size, 0.0), 6)
 
     def calc_commission(self, size: float, price: float, _direction: int, is_open: bool) -> float:
@@ -170,6 +184,19 @@ class CryptoEngine(BaseEngine):
             bar = frame.loc[timestamp]
             if not isinstance(bar, pd.Series):
                 raise ValueError(f"duplicate frame timestamp for {symbol} at {timestamp}")
+            for field in (
+                "contract_size_base", "contract_amount_step", "contract_min_amount",
+                "instrument_id", "contract_unit",
+            ):
+                if field not in bar or pd.isna(bar[field]):
+                    raise ValueError(f"missing perpetual contract metadata {field} for {symbol}")
+            if str(bar["contract_unit"]) != "contracts":
+                raise ValueError(f"unsupported contract quantity unit for {symbol}")
+            self._contract_metadata[symbol] = {
+                "contract_size_base": float(bar["contract_size_base"]),
+                "contract_amount_step": float(bar["contract_amount_step"]),
+                "contract_min_amount": float(bar["contract_min_amount"]),
+            }
             ExecutionFrame(timestamp, float(bar["execution_open"]))
             rate = bar["funding_rate"]
             settlement = bar["funding_settlement_time"]
@@ -274,6 +301,52 @@ class CryptoEngine(BaseEngine):
                 funding_pnl=-payment,
             )
 
+    def _apply_intrabar_stop_losses(self, timestamp: pd.Timestamp) -> None:
+        """Approximate stop triggers from mark OHLC; a stop blocks re-entry this bar."""
+        stop_fraction = self.config.get("stop_loss_pct")
+        if stop_fraction is None:
+            return
+        stop_fraction = float(stop_fraction)
+        if not 0 < stop_fraction < 1:
+            raise ValueError("stop_loss_pct must be between zero and one")
+        for symbol, position in list(self.positions.items()):
+            frame = self._risk_frames[symbol]
+            stop_price = position.entry_price * (
+                1 - stop_fraction if position.direction > 0 else 1 + stop_fraction
+            )
+            triggered = (
+                frame.mark_low <= stop_price
+                if position.direction > 0
+                else frame.mark_high >= stop_price
+            )
+            if not triggered:
+                continue
+            open_breached = (
+                frame.mark_open <= stop_price
+                if position.direction > 0
+                else frame.mark_open >= stop_price
+            )
+            trigger_base = frame.mark_open if open_breached else stop_price
+            exit_price = self.apply_slippage(trigger_base, -position.direction)
+            self._active_symbol = symbol
+            self._close_position(symbol, exit_price, timestamp, "stop_loss")
+            self._blocked_symbols.add(symbol)
+            self._record_event(
+                timestamp,
+                "stop_loss_trigger",
+                symbol=symbol,
+                direction=position.direction,
+                entry_price=position.entry_price,
+                trigger_price=stop_price,
+                mark_open=frame.mark_open,
+                mark_high=frame.mark_high,
+                mark_low=frame.mark_low,
+                execution_price=exit_price,
+                execution_price_source="mark_ohlc_stop_approximation",
+                gap_through_stop=open_breached,
+                slippage_rate=self.slippage_rate,
+            )
+
     def _account_state(self) -> AccountState:
         positions = tuple(
             PositionState(
@@ -364,7 +437,10 @@ class CryptoEngine(BaseEngine):
         self._rebalance_risk_checked = False
         self._build_strict_frames(timestamp, data_map, codes)
         self._apply_data_funding()
-        return self._evaluate_and_liquidate(timestamp, "mark_open")
+        stop = self._evaluate_and_liquidate(timestamp, "mark_open")
+        if not stop and self.terminal_status == "active":
+            self._apply_intrabar_stop_losses(timestamp)
+        return stop
 
     def after_rebalance_bar(
         self,
@@ -377,8 +453,12 @@ class CryptoEngine(BaseEngine):
         if self.terminal_status == "account_liquidation":
             return True
         if self.position_adjustment == "rebalance" and self._rebalance_risk_checked:
+            self._apply_intrabar_stop_losses(timestamp)
             return False
-        return self._evaluate_and_liquidate(timestamp, "adverse")
+        stop = self._evaluate_and_liquidate(timestamp, "adverse")
+        if not stop and self.terminal_status == "active":
+            self._apply_intrabar_stop_losses(timestamp)
+        return stop
 
     def _risk_after_atomic_mutation(self, timestamp: pd.Timestamp) -> None:
         if not self.perpetual_strict or self.position_adjustment != "rebalance":

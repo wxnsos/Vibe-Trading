@@ -10,6 +10,7 @@ Usage: ``python -m backtest.runner <run_dir>``
 
 import ast
 import copy
+import hashlib
 import importlib.util
 import inspect
 import json
@@ -1302,6 +1303,173 @@ def _maybe_inject_fundamentals_for_factor_panel(
 
 # --- Main entry ---
 
+def _perpetual_preflight(config: dict, data_map: dict[str, pd.DataFrame], run_dir: Path) -> None:
+    """Validate and fingerprint all inputs before a strict perpetual run."""
+    if not config.get("perpetual_strict"):
+        return
+    required_config = ("initial_cash", "leverage", "taker_rate", "slippage")
+    missing_config = [key for key in required_config if key not in config]
+    if missing_config:
+        raise ValueError(
+            "perpetual_strict requires explicit assumptions for: "
+            + ", ".join(missing_config)
+        )
+    for key in ("taker_rate", "slippage"):
+        value = float(config[key])
+        if not pd.notna(value) or value < 0 or value >= 1:
+            raise ValueError(f"{key} must be an explicit finite rate in [0, 1)")
+    if float(config["leverage"]) <= 0:
+        raise ValueError("leverage must be positive")
+
+    import numpy as np
+
+    report: dict[str, Any] = {
+        "schema_version": 1,
+        "source": "CCXT public market data; exchange identity verified as OKX",
+        "instrument_type": "linear USDT-settled perpetual swap",
+        "interval": str(config.get("interval", "1D")),
+        "assumptions": {
+            "initial_cash": float(config["initial_cash"]),
+            "leverage": float(config["leverage"]),
+            "margin_mode": str(config.get("margin_mode", "")),
+            "taker_rate": float(config["taker_rate"]),
+            "slippage": float(config["slippage"]),
+            "fee_and_slippage_are_user_supplied_scenarios": True,
+        },
+        "datasets": {},
+        "status": "passed_with_limitations",
+        "limitations": [
+            "CCXT does not expose preserved raw HTTP response bytes for a raw-response SHA-256 archive.",
+            "Exchange contract metadata is current metadata; historical specification changes are not reconstructed.",
+            "Trading fee and slippage values are explicit scenario assumptions, not account-specific fills.",
+            "Stop-loss fills use hourly mark OHLC and configured slippage; intrabar path and queue position are unknown.",
+        ],
+    }
+    failures: list[str] = []
+    delta = {
+        "1m": pd.Timedelta(minutes=1), "5m": pd.Timedelta(minutes=5),
+        "15m": pd.Timedelta(minutes=15), "30m": pd.Timedelta(minutes=30),
+        "1H": pd.Timedelta(hours=1), "1h": pd.Timedelta(hours=1),
+        "4H": pd.Timedelta(hours=4), "1D": pd.Timedelta(days=1),
+    }.get(report["interval"])
+    for symbol in config.get("codes", []):
+        frame = data_map.get(symbol)
+        if frame is None or frame.empty:
+            failures.append(f"{symbol}: no data")
+            continue
+        expected_id = symbol
+        required = {
+            "instrument_id", "contract_unit", "contract_size_base", "contract_amount_step",
+            "contract_min_amount", "execution_open", "mark_open", "mark_high", "mark_low",
+            "mark_close", "funding_rate", "funding_settlement_time", "maintenance_brackets",
+            "maintenance_bracket_version",
+        }
+        absent = sorted(required.difference(frame.columns))
+        if absent:
+            failures.append(f"{symbol}: missing fields {', '.join(absent)}")
+            continue
+        if set(frame["instrument_id"].astype(str)) != {expected_id}:
+            failures.append(f"{symbol}: instrument identity mismatch")
+        if set(frame["contract_unit"].astype(str)) != {"contracts"}:
+            failures.append(f"{symbol}: unsupported quantity unit")
+        if frame.index.has_duplicates or not frame.index.is_monotonic_increasing:
+            failures.append(f"{symbol}: duplicate or unordered timestamps")
+        if delta is None:
+            failures.append(f"unsupported strict perpetual interval: {report['interval']}")
+        elif len(frame) > 1 and not frame.index.to_series().diff().dropna().eq(delta).all():
+            failures.append(f"{symbol}: missing or irregular candles")
+        prices = frame[["open", "high", "low", "close", "execution_open", "mark_open", "mark_high", "mark_low", "mark_close"]].apply(pd.to_numeric, errors="coerce")
+        if prices.isna().any().any() or not np.isfinite(prices.to_numpy(dtype=float)).all():
+            failures.append(f"{symbol}: missing or non-finite price values")
+        else:
+            invalid = (
+                (frame["high"] < frame[["open", "low", "close"]].max(axis=1))
+                | (frame["low"] > frame[["open", "high", "close"]].min(axis=1))
+                | (frame["mark_high"] < frame[["mark_open", "mark_low", "mark_close"]].max(axis=1))
+                | (frame["mark_low"] > frame[["mark_open", "mark_high", "mark_close"]].min(axis=1))
+            )
+            if invalid.any():
+                failures.append(f"{symbol}: invalid OHLC ranges")
+        settled = frame["funding_settlement_time"].notna()
+        funding_values = pd.to_numeric(frame["funding_rate"], errors="coerce")
+        if funding_values.isna().any() or not np.isfinite(funding_values.to_numpy(dtype=float)).all():
+            failures.append(f"{symbol}: funding rates are missing or non-finite")
+        if frame.loc[~settled, "funding_rate"].ne(0).any():
+            failures.append(f"{symbol}: funding rate exists without a settlement timestamp")
+        if not frame.index[settled].equals(
+            pd.DatetimeIndex(frame.loc[settled, "funding_settlement_time"])
+        ):
+            failures.append(f"{symbol}: funding settlement timestamps are not aligned")
+        for key in ("contract_size_base", "contract_amount_step", "contract_min_amount"):
+            values = pd.to_numeric(frame[key], errors="coerce")
+            if values.isna().any() or not np.isfinite(values.to_numpy(dtype=float)).all() or (values <= 0).any():
+                failures.append(f"{symbol}: invalid {key}")
+        if frame["maintenance_brackets"].isna().any() or frame["maintenance_bracket_version"].isna().any():
+            failures.append(f"{symbol}: missing maintenance-margin schedule")
+        normalized = frame.to_csv(index=True, lineterminator="\n").encode("utf-8")
+        report["datasets"][symbol] = {
+            "rows": int(len(frame)),
+            "start": frame.index[0].isoformat(),
+            "end": frame.index[-1].isoformat(),
+            "normalized_frame_sha256": hashlib.sha256(normalized).hexdigest(),
+            "source_raw_response_hash": None,
+            "source_raw_response_hash_note": "CCXT normalized responses do not expose preserved raw HTTP response bytes.",
+            "contract_size_base": float(frame["contract_size_base"].iloc[0]),
+            "contract_amount_step": float(frame["contract_amount_step"].iloc[0]),
+            "contract_min_amount": float(frame["contract_min_amount"].iloc[0]),
+            "exchange_order_unit": "contracts",
+            "engine_position_unit": "base asset quantity",
+            "base_quantity_per_contract": float(frame["contract_size_base"].iloc[0]),
+            "funding_settlement_rows": int(frame["funding_settlement_time"].notna().sum()),
+            "maintenance_bracket_version": str(frame["maintenance_bracket_version"].iloc[0]),
+        }
+    if failures:
+        report["status"] = "failed"
+        report["failures"] = failures
+    out = run_dir / "artifacts" / "perpetual_preflight.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8")
+    if failures:
+        raise ValueError("perpetual preflight failed: " + "; ".join(failures))
+
+
+def _validate_perpetual_config(config: dict) -> None:
+    """Reject unverifiable strict-perpetual settings before network access."""
+    if not config.get("perpetual_strict"):
+        return
+    if config.get("source") != "ccxt":
+        raise ValueError("perpetual_strict requires source='ccxt' (OKX public market data)")
+    codes = config.get("codes") or []
+    if not codes or any(not str(code).strip().upper().endswith("-SWAP") for code in codes):
+        raise ValueError("perpetual_strict requires explicit OKX -SWAP instrument IDs")
+    required = (
+        "initial_cash", "leverage", "taker_rate", "slippage", "stop_loss_pct",
+        "bracket_artifacts",
+    )
+    absent = [key for key in required if key not in config]
+    if absent:
+        raise ValueError("perpetual_strict requires explicit inputs: " + ", ".join(absent))
+    if config.get("funding_mode") != "data":
+        raise ValueError("perpetual_strict requires funding_mode='data'; fixed estimates are not accepted")
+    if config.get("margin_mode") not in {"cross", "isolated"}:
+        raise ValueError("perpetual_strict requires explicit margin_mode='cross' or 'isolated'")
+    artifacts = config.get("bracket_artifacts")
+    if not isinstance(artifacts, dict) or any(code not in artifacts for code in codes):
+        raise ValueError("perpetual_strict requires a validated maintenance-bracket artifact for every symbol")
+    for key in ("initial_cash", "leverage", "taker_rate", "slippage", "stop_loss_pct"):
+        try:
+            value = float(config[key])
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{key} must be numeric") from exc
+        if not pd.notna(value):
+            raise ValueError(f"{key} must be finite")
+        if key in {"initial_cash", "leverage"} and value <= 0:
+            raise ValueError(f"{key} must be positive")
+        if key in {"taker_rate", "slippage"} and not 0 <= value < 1:
+            raise ValueError(f"{key} must be in [0, 1)")
+        if key == "stop_loss_pct" and not 0 < value < 1:
+            raise ValueError("stop_loss_pct must be in (0, 1)")
+
 def main(run_dir: Path) -> None:
     """Load config, fetch data, run the selected backtest engine.
 
@@ -1356,6 +1524,11 @@ def main(run_dir: Path) -> None:
         sys.exit(1)
 
     config = raw_config
+    try:
+        _validate_perpetual_config(config)
+    except (TypeError, ValueError) as exc:
+        print(json.dumps({"error": str(exc)}))
+        sys.exit(1)
     source = config.get("source", "tushare")
     codes = config.get("codes", [])
 
@@ -1397,6 +1570,11 @@ def main(run_dir: Path) -> None:
     interval = config.get("interval", "1D")
     if not data_map:
         print(json.dumps({"error": "No data fetched"}))
+        sys.exit(1)
+    try:
+        _perpetual_preflight(config, data_map, run_dir)
+    except (TypeError, ValueError, KeyError) as exc:
+        print(json.dumps({"error": str(exc)}))
         sys.exit(1)
     data_map = _maybe_inject_fundamentals_for_factor_panel(data_map, config)
 
@@ -1940,12 +2118,22 @@ def fetch_data_map(config: dict) -> DataFetchResult:
                 source,
                 served_by,
             )
+        fetch_kwargs = {
+            "fields": config.get("extra_fields") or None,
+            "interval": interval,
+        }
+        if config.get("perpetual_strict"):
+            if source != "ccxt":
+                raise ValueError("perpetual_strict requires source='ccxt'")
+            if not all(code.strip().upper().endswith("-SWAP") for code in codes):
+                raise ValueError("perpetual_strict requires explicit -SWAP instrument IDs")
+            fetch_kwargs["bracket_artifacts"] = config.get("bracket_artifacts") or {}
+            fetch_kwargs["require_brackets"] = True
         data_map = loader.fetch(
             codes,
             config.get("start_date", ""),
             config.get("end_date", ""),
-            fields=config.get("extra_fields") or None,
-            interval=interval,
+            **fetch_kwargs,
         )
         # The local loader keys ``local:AAPL.US`` by ``AAPL.US``. Compare and
         # continue with the bare symbol, or a served symbol is counted as

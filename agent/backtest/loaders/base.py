@@ -480,7 +480,10 @@ _LOADER_CACHE_TRUE_VALUES = {"1", "true", "yes", "on"}
 # actual adjustment stamp. Older entries may contain artificial return jumps.
 # v9: SEC successor/predecessor facts extend historical coverage. Old cached
 # panels may omit the predecessor's filings and must be rebuilt.
-_LOADER_CACHE_VERSION = 9
+# v10: perpetual frames gain validated contract sizing metadata and strict
+# mark/funding coverage. Older cached perpetual frames cannot satisfy that
+# execution contract.
+_LOADER_CACHE_VERSION = 10
 _LOADER_FRAME_METADATA_ATTRS = ("quote_currency", "currency_conversion", "adjustment")
 
 

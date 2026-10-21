@@ -9,13 +9,18 @@ import pytest
 import pandas as pd
 
 from backtest.loaders.base import make_loader_cache_key
-from backtest.loaders.ccxt_loader import _parse_ccxt_symbol, _validate_bracket_artifact
+from backtest.loaders.ccxt_loader import (
+    _parse_ccxt_symbol,
+    _validate_bracket_artifact,
+    _validate_perpetual_candles,
+)
 from tests.loader_contract import assert_loader_contract
 
 
 def _hourly_rows(opens: list[float]) -> list[list[float]]:
     start = int(pd.Timestamp("2024-01-01 00:00:00").timestamp() * 1000)
     hour = 3_600_000
+    opens = (opens + [opens[-1]] * 24)[:24]
     return [
         [start + i * hour, value, value + 2, value - 2, value + 1, 10 + i]
         for i, value in enumerate(opens)
@@ -45,6 +50,42 @@ class _PerpetualExchange:
             else [{"timestamp": start, "fundingRate": 0.0}]
         )
         self.calls: list[dict[str, object]] = []
+
+    def load_markets(self):
+        return {
+            "BTC/USDT:USDT": {
+                "swap": True,
+                "linear": True,
+                "settle": "USDT",
+                "contractSize": 0.01,
+                "precision": {"amount": 1},
+                "limits": {"amount": {"min": 1}},
+                "info": {
+                    "instId": "BTC-USDT-SWAP",
+                    "ctVal": "0.01",
+                    "ctValCcy": "BTC",
+                    "settleCcy": "USDT",
+                    "lotSz": "1",
+                    "minSz": "1",
+                },
+            },
+            "ETH/USDT:USDT": {
+                "swap": True,
+                "linear": True,
+                "settle": "USDT",
+                "contractSize": 0.1,
+                "precision": {"amount": 1},
+                "limits": {"amount": {"min": 1}},
+                "info": {
+                    "instId": "ETH-USDT-SWAP",
+                    "ctVal": "0.1",
+                    "ctValCcy": "ETH",
+                    "settleCcy": "USDT",
+                    "lotSz": "1",
+                    "minSz": "1",
+                },
+            },
+        }
 
     def fetch_ohlcv(self, symbol, timeframe, since=None, limit=None, params=None):
         self.calls.append({
@@ -117,6 +158,24 @@ def test_okx_swap_symbol_maps_to_unified_contract() -> None:
     assert _parse_ccxt_symbol("ETH-USDT-SWAP") == ("ETH/USDT:USDT", "okx_swap")
 
 
+def test_perpetual_candle_quality_gate_rejects_gaps_and_bad_ohlc() -> None:
+    index = pd.to_datetime(["2024-01-01 00:00", "2024-01-01 02:00"])
+    frame = pd.DataFrame(
+        {
+            "open": [100.0, 100.0], "high": [102.0, 102.0],
+            "low": [98.0, 98.0], "close": [101.0, 101.0], "volume": [1.0, 1.0],
+        },
+        index=index,
+    )
+    with pytest.raises(ValueError, match="not continuous"):
+        _validate_perpetual_candles(frame, symbol="ETH/USDT:USDT", timeframe="1h", label="trade-price")
+
+    frame.index = pd.date_range("2024-01-01", periods=2, freq="h")
+    frame.loc[frame.index[0], "high"] = 99.0
+    with pytest.raises(ValueError, match="invalid OHLCV"):
+        _validate_perpetual_candles(frame, symbol="ETH/USDT:USDT", timeframe="1h", label="trade-price")
+
+
 @pytest.mark.parametrize("code", ["BTC-PERP", "-USDT-PERP", "BTC--PERP"])
 def test_malformed_perpetual_symbol_is_rejected(code: str) -> None:
     with pytest.raises(ValueError, match="USD-M perpetual symbol"):
@@ -149,11 +208,15 @@ def test_perpetual_fetch_separates_execution_and_mark_prices(monkeypatch) -> Non
         ["BTC-USDT-PERP"], "2024-01-01", "2024-01-01", interval="1H"
     )["BTC-USDT-PERP"]
 
-    assert frame["execution_open"].tolist() == [100.0, 101.0]
-    assert frame["mark_open"].tolist() == [99.0, 100.0]
-    assert frame["mark_high"].tolist() == [101.0, 102.0]
-    assert frame["mark_low"].tolist() == [97.0, 98.0]
-    assert frame["mark_close"].tolist() == [100.0, 101.0]
+    assert frame["execution_open"].iloc[:2].tolist() == [100.0, 101.0]
+    assert frame["mark_open"].iloc[:2].tolist() == [99.0, 100.0]
+    assert frame["mark_high"].iloc[:2].tolist() == [101.0, 102.0]
+    assert frame["mark_low"].iloc[:2].tolist() == [97.0, 98.0]
+    assert frame["mark_close"].iloc[:2].tolist() == [100.0, 101.0]
+    assert frame["contract_size_base"].iloc[:2].tolist() == [0.01, 0.01]
+    assert frame["contract_amount_step"].iloc[:2].tolist() == [1.0, 1.0]
+    assert frame["contract_min_amount"].iloc[:2].tolist() == [1.0, 1.0]
+    assert frame["instrument_id"].iloc[:2].tolist() == ["BTC-USDT-SWAP"] * 2
     assert exchange.calls[0]["symbol"] == "BTC/USDT:USDT"
     assert exchange.calls[0]["params"] is None
     assert exchange.calls[1]["params"] == {"price": "mark"}
@@ -189,7 +252,7 @@ def test_perpetual_fetch_aligns_explicit_zero_funding_settlement(monkeypatch) ->
         ["BTC-USDT-PERP"], "2024-01-01", "2024-01-01", interval="1H"
     )["BTC-USDT-PERP"]
 
-    assert frame["funding_rate"].tolist() == [0.0, 0.0]
+    assert frame["funding_rate"].iloc[:2].tolist() == [0.0, 0.0]
     assert frame["funding_settlement_time"].iloc[0] == pd.Timestamp("2024-01-01")
     assert pd.isna(frame["funding_settlement_time"].iloc[1])
 
@@ -405,5 +468,5 @@ def test_perpetual_fetch_rounds_funding_settlement_jitter(monkeypatch) -> None:
         ["BTC-USDT-PERP"], "2024-01-01", "2024-01-01", interval="1H"
     )["BTC-USDT-PERP"]
 
-    assert frame["funding_rate"].tolist() == [0.0003, 0.0]
+    assert frame["funding_rate"].iloc[:2].tolist() == [0.0003, 0.0]
     assert frame["funding_settlement_time"].iloc[0] == pd.Timestamp("2024-01-01")

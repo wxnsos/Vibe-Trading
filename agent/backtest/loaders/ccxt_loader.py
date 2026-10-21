@@ -16,6 +16,7 @@ import time
 from typing import Dict, List, Optional
 
 import pandas as pd
+import numpy as np
 
 from backtest.loaders.base import (
     cached_loader_fetch,
@@ -182,6 +183,39 @@ def _validate_bracket_artifact(artifact: dict, *, expected_symbol: str) -> tuple
     return normalized, computed_hash
 
 
+def _validate_perpetual_candles(
+    frame: pd.DataFrame, *, symbol: str, timeframe: str, label: str,
+) -> None:
+    """Fail closed on malformed or discontinuous perpetual OHLCV series."""
+    if frame.empty:
+        raise ValueError(f"{label} candles are empty for {symbol}")
+    if frame.index.has_duplicates:
+        raise ValueError(f"duplicate {label} candle timestamps for {symbol}")
+    if not frame.index.is_monotonic_increasing:
+        raise ValueError(f"{label} candle timestamps are not increasing for {symbol}")
+    delta = _TIMEFRAME_DELTA.get(timeframe)
+    if delta is None:
+        raise ValueError(f"unsupported CCXT timeframe: {timeframe}")
+    gaps = frame.index.to_series().diff().dropna()
+    if not gaps.eq(delta).all():
+        first = gaps[gaps.ne(delta)].index[0]
+        raise ValueError(
+            f"{label} candles are not continuous for {symbol}; unexpected spacing at {first}"
+        )
+    columns = ["open", "high", "low", "close", "volume"]
+    values = frame[columns].apply(pd.to_numeric, errors="coerce")
+    if values.isna().any().any() or not np.isfinite(values.to_numpy(dtype=float)).all():
+        raise ValueError(f"{label} candles contain missing or non-finite OHLCV values for {symbol}")
+    invalid = (
+        (values["high"] < values[["open", "low", "close"]].max(axis=1))
+        | (values["low"] > values[["open", "high", "close"]].min(axis=1))
+        | (values["volume"] < 0)
+        | (values[["open", "high", "low", "close"]] <= 0).any(axis=1)
+    )
+    if invalid.any():
+        raise ValueError(f"{label} candles contain invalid OHLCV rows for {symbol}")
+
+
 @register
 class DataLoader:
     """CCXT-backed crypto OHLCV loader (100+ exchanges)."""
@@ -277,8 +311,8 @@ class DataLoader:
                 artifact = (bracket_artifacts or {}).get(code)
 
                 def fetch_window(window_start: str, window_end: str):
-                    since_ms = int(pd.Timestamp(window_start).timestamp() * 1000)
-                    end_ms = int((pd.Timestamp(window_end) + pd.Timedelta(days=1)).timestamp() * 1000)
+                    since_ms = int(pd.Timestamp(window_start, tz="UTC").timestamp() * 1000)
+                    end_ms = int((pd.Timestamp(window_end, tz="UTC") + pd.Timedelta(days=1)).timestamp() * 1000)
                     if instrument_type in {"swap", "okx_swap"}:
                         return self._fetch_perpetual(
                             exchange, ccxt_symbol, timeframe, since_ms, end_ms,
@@ -328,11 +362,34 @@ class DataLoader:
                 "artifact via DataLoader.fetch(bracket_artifacts={code: artifact})."
             )
 
-        if hasattr(exchange, "load_markets"):
-            markets = exchange.load_markets()
-            market = markets.get(symbol)
-            if not market or not market.get("swap") or not market.get("linear") or market.get("settle") != "USDT":
-                raise ValueError(f"{symbol} is not a verified linear USDT-settled perpetual swap")
+        if not callable(getattr(exchange, "load_markets", None)):
+            raise ValueError(f"exchange metadata endpoint is unavailable for {symbol}")
+        markets = exchange.load_markets()
+        market = markets.get(symbol)
+        if not market or not market.get("swap") or not market.get("linear") or market.get("settle") != "USDT":
+            raise ValueError(f"{symbol} is not a verified linear USDT-settled perpetual swap")
+        if is_okx:
+            raw = market.get("info") or {}
+            if raw.get("instId") != symbol.replace("/", "-").replace(":USDT", "-SWAP"):
+                raise ValueError(f"OKX instrument identity does not match {symbol}")
+            try:
+                contract_size = float(raw["ctVal"])
+                amount_step = float(raw["lotSz"])
+                minimum_contracts = float(raw["minSz"])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"OKX contract value, lot size, or minimum size is unavailable for {symbol}"
+                ) from exc
+            if not all(pd.notna(v) and v > 0 for v in (contract_size, amount_step, minimum_contracts)):
+                raise ValueError(f"invalid OKX contract quantity metadata for {symbol}")
+            if raw.get("settleCcy") != "USDT" or raw.get("ctValCcy") != symbol.split("/")[0]:
+                raise ValueError(f"OKX contract unit is not a linear {symbol.split('/')[0]}-settled amount")
+        else:
+            contract_size = float(market.get("contractSize") or 0)
+            amount_step = float(market.get("precision", {}).get("amount") or 0)
+            minimum_contracts = float(market.get("limits", {}).get("amount", {}).get("min") or 0)
+            if contract_size <= 0 or amount_step <= 0 or minimum_contracts <= 0:
+                raise ValueError(f"contract quantity metadata is incomplete for {symbol}")
 
         trade = cls._fetch_one(exchange, symbol, timeframe, since_ms, end_ms)
         mark = cls._fetch_one(
@@ -346,8 +403,30 @@ class DataLoader:
         if trade is None or mark is None or not trade.index.equals(mark.index):
             raise ValueError(f"mark-price timestamps are incomplete or unsynchronized for {symbol}")
 
+        _validate_perpetual_candles(trade, symbol=symbol, timeframe=timeframe, label="trade-price")
+        _validate_perpetual_candles(mark, symbol=symbol, timeframe=timeframe, label="mark-price")
+        delta = _TIMEFRAME_DELTA[timeframe]
+        expected_index = pd.date_range(
+            start=pd.Timestamp(since_ms, unit="ms"),
+            end=pd.Timestamp(end_ms, unit="ms") - delta,
+            freq=delta,
+            name=trade.index.name,
+        )
+        if not trade.index.equals(expected_index):
+            raise ValueError(
+                f"incomplete perpetual candle coverage for {symbol}: requested "
+                f"[{expected_index[0]}, {expected_index[-1]}], received "
+                f"[{trade.index[0]}, {trade.index[-1]}] ({len(trade)}/{len(expected_index)} bars)"
+            )
+
         result = trade.copy()
         result["market_risk_source"] = f"ccxt:{'okx' if is_okx else getattr(exchange, 'id', 'binanceusdm')}"
+        result["contract_size_base"] = contract_size
+        result["contract_amount_step"] = amount_step
+        result["contract_min_amount"] = minimum_contracts
+        result["contract_unit"] = "contracts"
+        suffix = "-SWAP" if is_okx else "-PERP"
+        result["instrument_id"] = symbol.split("/")[0] + "-USDT" + suffix
         result["execution_open"] = trade["open"]
         for column in ("open", "high", "low", "close"):
             result[f"mark_{column}"] = mark[column]
@@ -405,6 +484,7 @@ class DataLoader:
         limit = 100 if is_okx else 1000
         deadline = time.monotonic() + _CCXT_FETCH_BUDGET_S
         label = f"ccxt funding fetch for {symbol}"
+        completed = False
 
         for _ in range(200):
             check_budget(deadline, label, budget_s=_CCXT_FETCH_BUDGET_S)
@@ -421,8 +501,16 @@ class DataLoader:
             rows.extend(page)
             last_ts = int(page[-1]["timestamp"])
             if last_ts >= end_ms or len(page) < limit:
+                completed = True
                 break
+            if last_ts < cursor:
+                raise ValueError(f"funding pagination did not advance for {symbol}")
             cursor = last_ts + 1
+
+        if not completed:
+            raise ValueError(
+                f"funding history pagination exceeded the safety page limit for {symbol}"
+            )
 
         if not rows:
             return pd.DataFrame(
@@ -440,6 +528,8 @@ class DataLoader:
                 [row["fundingRate"] for row in rows], errors="raise"
             ),
         }).set_index("trade_date").sort_index()
+        if frame.index.has_duplicates:
+            raise ValueError(f"duplicate funding settlement for {symbol}")
         start_dt = pd.Timestamp(since_ms, unit="ms")
         end_dt = pd.Timestamp(end_ms, unit="ms")
         return frame[(frame.index >= start_dt) & (frame.index < end_dt)]

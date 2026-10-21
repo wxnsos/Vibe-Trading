@@ -92,6 +92,11 @@ def _strict_frame(
             "funding_settlement_time": settlements or [pd.NaT] * len(dates),
             "maintenance_brackets": [_BRACKETS] * len(dates),
             "maintenance_bracket_version": ["fixture-v1"] * len(dates),
+            "contract_size_base": [1.0] * len(dates),
+            "contract_amount_step": [0.001] * len(dates),
+            "contract_min_amount": [0.001] * len(dates),
+            "contract_unit": ["contracts"] * len(dates),
+            "instrument_id": ["BTC-USDT-SWAP"] * len(dates),
         },
         index=dates,
     )
@@ -189,6 +194,41 @@ class TestCanExecute:
     def test_short_allowed(self) -> None:
         engine = _make_engine()
         assert engine.can_execute("BTC-USDT", -1, _make_bar()) is True
+
+
+def test_strict_round_size_converts_base_quantity_to_contract_grid() -> None:
+    engine = _strict_engine()
+    engine._contract_metadata["ETH-USDT-SWAP"] = {
+        "contract_size_base": 0.1,
+        "contract_amount_step": 1.0,
+        "contract_min_amount": 1.0,
+    }
+    engine._active_symbol = "ETH-USDT-SWAP"
+
+    assert engine.round_size(0.29, 3_000.0) == pytest.approx(0.2)
+    assert engine.round_size(0.09, 3_000.0) == 0.0
+
+
+def test_strict_stop_loss_uses_mark_extrema_and_blocks_same_bar_reentry(monkeypatch) -> None:
+    timestamp = pd.Timestamp("2026-01-01 00:00:00", tz="UTC")
+    frame = _strict_frame(pd.DatetimeIndex([timestamp]), mark_low=[98.0])
+    engine = _strict_engine(stop_loss_pct=0.01, slippage=0.001)
+    engine._build_strict_frames(timestamp, {"BTC-USDT-PERP": frame}, ["BTC-USDT-PERP"])
+    engine.positions["BTC-USDT-PERP"] = Position(
+        "BTC-USDT-PERP", 1, 100.0, timestamp - pd.Timedelta(hours=1), 1.0,
+    )
+    closed = {}
+
+    def close_position(symbol, price, exit_time, reason):
+        closed.update(symbol=symbol, price=price, exit_time=exit_time, reason=reason)
+        engine.positions.pop(symbol)
+
+    monkeypatch.setattr(engine, "_close_position", close_position)
+    engine._apply_intrabar_stop_losses(timestamp)
+
+    assert closed["reason"] == "stop_loss"
+    assert closed["price"] == pytest.approx(99.0 * (1 - engine.slippage_rate))
+    assert "BTC-USDT-PERP" in engine._blocked_symbols
 
     def test_close_allowed(self) -> None:
         engine = _make_engine()
