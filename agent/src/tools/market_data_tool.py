@@ -93,6 +93,9 @@ class MarketDataTool(BaseTool):
         "across symbols. 'split_dividend_additive' (the A-share qfq of Tencent, Eastmoney and AKShare) adjusts "
         "dividends by shifting the price level rather than scaling it, so it is not on "
         "the same scale as 'split_dividend'."
+        " For OKX perpetuals, preserve the exact `BASE-USDT-SWAP` symbol; never "
+        "substitute the spot `BASE-USDT` pair. Sampled/truncated swap bars are "
+        "rejected because they are not a continuous series."
     )
     parameters = {
         "type": "object",
@@ -102,7 +105,8 @@ class MarketDataTool(BaseTool):
                 "items": {"type": "string"},
                 "description": (
                     'Symbols such as ["AAPL.US"], ["700.HK"], ["TD.TO"], '
-                    '["PNG.V"], or ["BTC-USDT"].'
+                    '["PNG.V"], ["BTC-USDT"], or an OKX perpetual '
+                    '["ETH-USDT-SWAP"].'
                 ),
             },
             "start_date": {
@@ -242,4 +246,37 @@ class MarketDataTool(BaseTool):
         loader_resolver = kwargs.get("loader_resolver")
         if loader_resolver is not None:
             fetch_kwargs["loader_resolver"] = loader_resolver
-        return fetch_market_data_json(**fetch_kwargs)
+        result = fetch_market_data_json(**fetch_kwargs)
+        # Even-stride capping is useful for a compact research snapshot, but it
+        # destroys the bar cadence. A model can mistake the sampled rows for
+        # continuous OHLCV and use them in a perpetual-futures backtest. Fail
+        # closed for native OKX swaps whenever the shared response says it was
+        # sampled; the backtest tool loads the complete series directly.
+        if any(code.upper().endswith("-USDT-SWAP") for code in codes):
+            try:
+                payload = json.loads(result)
+            except (TypeError, json.JSONDecodeError):
+                payload = None
+            if isinstance(payload, dict):
+                for code in codes:
+                    bars = payload.get(code)
+                    if isinstance(bars, dict) and bars.get("truncated") is True:
+                        return json.dumps(
+                            {
+                                "ok": False,
+                                "error": (
+                                    f"{code} OHLCV was sampled ({bars.get('returned')} of "
+                                    f"{bars.get('rows')} rows; policy={bars.get('policy')}). "
+                                    "Sampled bars are not a continuous time series and must "
+                                    "not be used for backtesting. Narrow the date range or "
+                                    "use the backtest tool to load the complete perpetual "
+                                    "contract history."
+                                ),
+                                "symbol": code,
+                                "truncated": True,
+                                "rows": bars.get("rows"),
+                                "returned": bars.get("returned"),
+                            },
+                            ensure_ascii=False,
+                        )
+        return result

@@ -516,3 +516,51 @@ def test_market_data_tool_asks_only_a_us_equity_for_its_suffix():
             mod.MarketDataTool().execute(codes=["AAPL"], start_date="2026-08-20", end_date="2026-08-21")
         )
     assert refused["ok"] is False and "AAPL.US" in refused["error"]
+
+
+def test_market_data_tool_rejects_sampled_okx_swap_bars(monkeypatch):
+    from src.tools.market_data_tool import MarketDataTool
+
+    monkeypatch.setattr(
+        "src.tools.market_data_tool.fetch_market_data_json",
+        lambda **_kwargs: json.dumps({
+            "ETH-USDT-SWAP": {
+                "rows": 500,
+                "returned": 251,
+                "truncated": True,
+                "policy": "every-2th-row (even stride; last bar pinned)",
+                "data": [],
+            }
+        }),
+    )
+
+    payload = json.loads(MarketDataTool().execute(
+        codes=["ETH-USDT-SWAP"],
+        start_date="2024-01-01",
+        end_date="2024-02-01",
+        interval="1H",
+    ))
+
+    assert payload["ok"] is False
+    assert payload["symbol"] == "ETH-USDT-SWAP"
+    assert payload["truncated"] is True
+    assert payload["rows"] == 500
+    assert "must not be used for backtesting" in payload["error"]
+
+
+def test_market_data_tool_keeps_complete_okx_swap_bars(monkeypatch):
+    from src.tools.market_data_tool import MarketDataTool
+
+    complete = json.dumps({"ETH-USDT-SWAP": [{"trade_date": "2024-01-01T00:00:00", "close": 1}]})
+    monkeypatch.setattr(
+        "src.tools.market_data_tool.fetch_market_data_json",
+        lambda **_kwargs: complete,
+    )
+
+    result = MarketDataTool().execute(
+        codes=["ETH-USDT-SWAP"],
+        start_date="2024-01-01",
+        end_date="2024-01-01",
+        interval="1H",
+    )
+    assert result == complete
