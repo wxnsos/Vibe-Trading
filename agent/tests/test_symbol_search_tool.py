@@ -745,6 +745,43 @@ class TestCryptoPairWithoutABrokerConnection:
         assert data["candidates"][0]["exchange"] == "BINANCE"
         assert data["sources"]["public_exchange"] == "ok"
 
+    def test_okx_swap_resolves_as_a_distinct_contract(self, monkeypatch):
+        market = {
+            "id": "ETH-USDT-SWAP",
+            "symbol": "ETH/USDT:USDT",
+            "spot": False,
+            "swap": True,
+            "linear": True,
+            "settle": "USDT",
+            "contractSize": 0.1,
+            "limits": {"amount": {"min": 0.01}},
+            "active": True,
+        }
+        data = self._run(
+            monkeypatch,
+            "ETH-USDT-SWAP",
+            {"okx": {"ETH/USDT:USDT": market}},
+        )
+
+        assert [candidate["symbol"] for candidate in data["candidates"]] == [
+            "ETH-USDT-SWAP"
+        ]
+        candidate = data["candidates"][0]
+        assert candidate["type"] == "perpetual_swap"
+        assert candidate["exchange"] == "OKX"
+        assert candidate["instrument_id"] == "ETH-USDT-SWAP"
+        assert candidate["settle"] == "USDT"
+        assert candidate["contract_size"] == 0.1
+        assert candidate["amount_min"] == 0.01
+
+    def test_spot_market_cannot_resolve_an_okx_swap_query(self, monkeypatch):
+        data = self._run(
+            monkeypatch,
+            "ETH-USDT-SWAP",
+            {"okx": {"ETH/USDT:USDT": {"spot": True, "active": True}}},
+        )
+        assert data["candidates"] == []
+
     def test_second_venue_is_consulted_when_the_first_is_down(self, monkeypatch):
         data = self._run(
             monkeypatch, "SOL-USDT", {"okx": self._markets("SOL/USDT")}

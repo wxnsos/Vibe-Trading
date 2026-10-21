@@ -48,6 +48,9 @@ _SOURCE_PATTERNS = [
     # Korea: KOSPI (005930.KS) / KOSDAQ (247540.KQ), 6-digit codes. Served by
     # pykrx (KRX public data, no auth); registry falls back to Yahoo/yfinance.
     (re.compile(r"^\d{6}\.(KS|KQ)$", re.I), "pykrx"),
+    # OKX's native perpetual symbol must stay distinct from its spot pair and
+    # be routed to the contract-aware loader even when source="auto".
+    (re.compile(r"^(?=[A-Z0-9]*[A-Z])[A-Z0-9]+-USDT-SWAP$", re.I), "okx"),
     (re.compile(r"^(?=[A-Z0-9]*[A-Z])[A-Z0-9]+-USDT$", re.I), "okx"),
     (re.compile(r"^(?=[A-Z0-9]*[A-Z])[A-Z0-9]+/USDT$", re.I), "ccxt"),
     # Iran: Nobitex IRT-quoted crypto pairs (BTCIRT / BTC-IRT). Toman-
@@ -257,6 +260,11 @@ def fetch_market_data(
     groups: dict[tuple[str, str], list[str]] = {}
     for code in codes:
         src = detect_source(code) if source == "auto" else source
+        if code.strip().upper().endswith("-USDT-SWAP") and source not in {"auto", "okx"}:
+            diagnostics.setdefault(code, []).append(
+                {"source": src, "reason": "okx_swap_requires_okx_source"}
+            )
+            continue
         groups.setdefault((src, _detect_market(code)), []).append(code)
 
     def _chain_for(src: str, market: str) -> list[str]:
@@ -312,11 +320,17 @@ def fetch_market_data(
                 and fallback_chain_provider is None
                 else None
             )
-            candidates = (
-                list(override)
-                if override is not None and src in override
-                else [src, *chain]
-            )
+            # A native OKX SWAP symbol is an instrument assertion. It must
+            # never be substituted with an exchange's similarly named spot
+            # pair if OKX is unavailable or the contract history is incomplete.
+            if any(code.strip().upper().endswith("-USDT-SWAP") for code in src_codes):
+                candidates = ["okx"] if src == "okx" else []
+            else:
+                candidates = (
+                    list(override)
+                    if override is not None and src in override
+                    else [src, *chain]
+                )
         # Deduplicate (preserving order), then cap the attempt budget.
         attempts: list[str] = []
         for candidate in candidates:

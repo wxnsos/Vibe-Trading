@@ -49,6 +49,7 @@ from src.market_data import (
         ("BBD-B.TO", "yahoo"),  # hyphenated TSX class symbol
         ("PNG.V", "yahoo"),  # Canada TSX Venture
         ("BTC-USDT", "okx"),
+        ("ETH-USDT-SWAP", "okx"),
         ("ETH/USDT", "ccxt"),
         ("EUR/USD", "mt5"),  # forex pair → mt5 chain head (registry fallback)
         ("XAU/USD", "mt5"),  # metals share the forex route
@@ -184,6 +185,49 @@ def test_fetch_market_data_auto_routes_yahoo_suffix_symbols() -> None:
     assert all(code in out for code in ("GC=F", "EURUSD=X", "TD.TO", "PNG.V"))
     # First source tried must be yahoo (not tushare/akshare from the China chain).
     assert seen_sources and seen_sources[0] == "yahoo"
+
+
+def test_okx_swap_auto_route_never_falls_back_to_spot_or_another_venue() -> None:
+    attempted: list[str] = []
+
+    class _EmptyLoader:
+        def fetch(self, codes, start, end, *, interval="1D"):
+            return {}
+
+    def _resolver(source: str):
+        attempted.append(source)
+        return _EmptyLoader
+
+    out = fetch_market_data(
+        codes=["ETH-USDT-SWAP"],
+        start_date="2024-01-01",
+        end_date="2024-01-02",
+        source="auto",
+        loader_resolver=_resolver,
+    )
+
+    assert attempted == ["okx"]
+    assert out["_unresolved"] == ["ETH-USDT-SWAP"]
+
+
+def test_okx_swap_rejects_an_explicit_non_okx_source() -> None:
+    attempted: list[str] = []
+
+    def _resolver(source: str):
+        attempted.append(source)
+        raise AssertionError("a mismatched source must not be called")
+
+    out = fetch_market_data(
+        codes=["ETH-USDT-SWAP"],
+        start_date="2024-01-01",
+        end_date="2024-01-02",
+        source="binance",
+        loader_resolver=_resolver,
+    )
+
+    assert attempted == []
+    assert out["_unresolved"] == ["ETH-USDT-SWAP"]
+    assert out["_diagnostics"]["ETH-USDT-SWAP"][0]["reason"] == "okx_swap_requires_okx_source"
 
 
 # --------------------------------------------------------------------------

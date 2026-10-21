@@ -126,6 +126,10 @@ _CANONICAL_SYMBOL_RE = re.compile(
     # _market_hooks._MARKET_PATTERNS); test_market_identity_parity keeps the
     # two in step, because .L / .VN / .BA each landed there without landing here.
     r"[A-Z][A-Z0-9&.-]{0,19}\.(?:US|NS|BO|FX|TO|V|BA|SA|L|VN)|"
+    # Keep the OKX perpetual suffix in the identity token. The generic pair
+    # arm would otherwise scan only ETH-USDT from ETH-USDT-SWAP and authorize
+    # spot data for a perpetual request.
+    r"[A-Z0-9]{2,15}-USDT-SWAP|"
     r"[A-Z0-9]{2,15}(?:-|/)(?:USDT|USDC|USD|BTC|ETH)|"
     r"[A-Z]{2,15}(?:" + "|".join(_JOINED_CRYPTO_QUOTE_SUFFIXES) + r")|"
     r"\^[A-Z0-9&.\-]{1,20}|"
@@ -241,6 +245,8 @@ def _scan_symbols(text: str) -> set[str]:
 def _infer_venue(symbol: str) -> str | None:
     """Infer a coarse venue from a project symbol."""
     upper = _normalize_symbol(symbol)
+    if re.fullmatch(r"[A-Z0-9]{2,15}-USDT-SWAP", upper):
+        return "okx"
     suffixes = {
         ".US": "us",
         ".SH": "shanghai",
@@ -302,6 +308,8 @@ def _infer_venue(symbol: str) -> str | None:
 def _infer_currency(symbol: str) -> str | None:
     """Infer quote currency without performing an implicit conversion."""
     upper = _normalize_symbol(symbol)
+    if re.fullmatch(r"[A-Z0-9]{2,15}-USDT-SWAP", upper):
+        return "USDT"
     # HKEX assigns the currency by code range (RMB counters 80000-89999, a few
     # USD ranges), so 80700.HK is a CNY line beside 00700.HK in HKD. One table,
     # shared with the backtest's currency guard.
@@ -347,6 +355,9 @@ def _infer_currency(symbol: str) -> str | None:
 def _infer_instrument_type(symbol: str, candidate_type: Any = None) -> str:
     """Normalize provider types into the identity contract."""
     raw = str(candidate_type or "").strip().casefold()
+    upper = _normalize_symbol(symbol)
+    if re.fullmatch(r"[A-Z0-9]{2,15}-USDT-SWAP", upper):
+        return "perpetual_swap"
     if raw == "cfd":
         return "cfd"
     if "fund" in raw or "etf" in raw or "trust" in raw:
@@ -361,7 +372,6 @@ def _infer_instrument_type(symbol: str, candidate_type: Any = None) -> str:
         return "forex"
     if "index" in raw:
         return "index"
-    upper = _normalize_symbol(symbol)
     if upper.endswith("=F"):
         return "future"
     if upper.endswith(".FX"):

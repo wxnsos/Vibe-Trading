@@ -397,7 +397,7 @@ def _is_canadian_symbol(text: str) -> bool:
 
 
 def _canonical_crypto_pair(value: str) -> str | None:
-    """Return an explicit crypto pair in canonical ``BASE-QUOTE`` form.
+    """Return an explicit crypto market in canonical project spelling.
 
     A pair is only accepted as a crypto pair when its base is in the
     appropriate whitelist. Stablecoin quotes (``USDT``/``USDC``/``BUSD``/
@@ -408,9 +408,16 @@ def _canonical_crypto_pair(value: str) -> str | None:
     ``EURUSD`` / ``GBPUSD`` query does NOT auto-lock onto tokenized gold
     or a forex pair that the public venue catalogs do not list.
 
-    Returns ``"BASE-QUOTE"`` for an accepted pair, ``None`` otherwise.
+    Returns ``"BASE-QUOTE"`` for spot or ``"BASE-USDT-SWAP"`` for a linear
+    perpetual, ``None`` otherwise.
     """
     clean = str(value or "").strip().upper()
+    # OKX names linear perpetuals ``BASE-USDT-SWAP``. Preserve the suffix as
+    # part of identity: treating this as the spot pair would let a spot lookup
+    # authorize a perpetual backtest (and vice versa).
+    swap = re.fullmatch(r"([A-Z0-9]{2,15})-USDT-SWAP", clean)
+    if swap:
+        return f"{swap.group(1)}-USDT-SWAP"
     matched = _CRYPTO_PAIR_RE.fullmatch(clean)
     if matched:
         base, quote = matched.group(1), matched.group(2)
@@ -471,7 +478,7 @@ def _load_public_markets(exchange_id: str) -> Dict[str, Any]:
 def _search_public_exchanges(
     crypto_pair: str,
 ) -> tuple[List[Dict[str, Any]], str | None, str | None]:
-    """Resolve an exact pair against the public venue catalogs.
+    """Resolve an exact spot pair or OKX linear swap via public catalogs.
 
     Args:
         crypto_pair: Canonical ``BASE-QUOTE`` spelling.
@@ -480,10 +487,17 @@ def _search_public_exchanges(
         ``(candidates, source, status)``; ``source`` is ``None`` only when
         ccxt itself is unavailable.
     """
-    base, quote = crypto_pair.split("-", 1)
-    ccxt_symbol = f"{base}/{quote}"
+    is_swap = crypto_pair.endswith("-SWAP")
+    if is_swap:
+        base, quote, _ = crypto_pair.split("-", 2)
+        ccxt_symbol = f"{base}/{quote}:{quote}"
+        exchanges = ("okx",)
+    else:
+        base, quote = crypto_pair.split("-", 1)
+        ccxt_symbol = f"{base}/{quote}"
+        exchanges = _PUBLIC_CRYPTO_EXCHANGES
     failures: List[str] = []
-    for exchange_id in _PUBLIC_CRYPTO_EXCHANGES:
+    for exchange_id in exchanges:
         try:
             markets = _load_public_markets(exchange_id)
         except ImportError:
@@ -495,7 +509,10 @@ def _search_public_exchanges(
         market = markets.get(ccxt_symbol) if isinstance(markets, dict) else None
         if not isinstance(market, dict) or market.get("active") is False:
             continue
-        if market.get("spot") is False:
+        if is_swap:
+            if not market.get("swap") or not market.get("linear") or market.get("settle") != "USDT":
+                continue
+        elif market.get("spot") is False:
             continue
         return (
             [
@@ -503,9 +520,15 @@ def _search_public_exchanges(
                     "symbol": crypto_pair,
                     "name": None,
                     "market": "crypto",
-                    "type": "cryptocurrency",
+                    "type": "perpetual_swap" if is_swap else "cryptocurrency",
                     "exchange": exchange_id.upper(),
                     "source": "public_exchange",
+                    **({
+                        "instrument_id": market.get("id"),
+                        "settle": market.get("settle"),
+                        "contract_size": market.get("contractSize"),
+                        "amount_min": ((market.get("limits") or {}).get("amount") or {}).get("min"),
+                    } if is_swap else {}),
                 }
             ],
             "public_exchange",

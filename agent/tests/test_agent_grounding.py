@@ -614,6 +614,7 @@ def test_normalize_joined_crypto_pairs(raw: str, expected: str) -> None:
         ("ETH/USDT latest price", {"ETH-USDT"}),
         ("BTC-USDT close", {"BTC-USDT"}),
         ("BTCUSDT, ETH-USDT, BTC-USD", {"BTC-USDT", "ETH-USDT", "BTC-USD"}),
+        ("ETH-USDT-SWAP", {"ETH-USDT-SWAP"}),
     ],
 )
 def test_scan_symbols_detects_joined_pairs(text: str, expected: set[str]) -> None:
@@ -832,6 +833,7 @@ def test_explicit_symbol_and_resolver_suffix_alias_are_one_identity(
         ("PAXG-USDT", "crypto_or_fx", "crypto"),
         # Regression: existing crypto / US equity behavior unchanged.
         ("BTC-USDT", "crypto_or_fx", "crypto"),
+        ("ETH-USDT-SWAP", "okx", "perpetual_swap"),
         ("GLD", None, "listed_security"),
         ("AAPL.US", "us", "listed_security"),
     ],
@@ -853,6 +855,8 @@ def test_runtime_registry_classifies_gold_fx_futures_consistently(
     """
     assert _infer_venue(symbol) == expected_venue
     assert _infer_instrument_type(symbol) == expected_type
+    if symbol.endswith("-SWAP"):
+        assert _infer_currency(symbol) == "USDT"
     # Quote currency is non-None only for dashed / slashed shapes.
     if "-" in symbol or "/" in symbol:
         # Whitelist-based ``USD`` leg: only metals/FX/forex (not crypto).
