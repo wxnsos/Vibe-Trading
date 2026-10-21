@@ -717,7 +717,7 @@ export function Settings() {
                 { value: okxPassphrase, setValue: setOkxPassphrase, label: "settings.okxPassphrase", configured: dataSettings.okx_passphrase_configured },
               ].map((item) => (
                 <label className="grid gap-2" key={item.label}>
-                  <span className={labelClass}>{t(item.label)}</span>
+                  <span className={labelClass}>{t(item.label as "settings.okxApiKey" | "settings.okxSecret" | "settings.okxPassphrase")}</span>
                   <input type="password" value={item.value} onChange={(event) => item.setValue(event.target.value)} className={fieldClass} placeholder={item.configured ? t("settings.configured") : t("settings.keepCurrentKey")} autoComplete="new-password" disabled={clearOkxCredentials} />
                 </label>
               ))}
