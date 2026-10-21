@@ -27,7 +27,8 @@
       "scheduled": "Repita uma pesquisa em horários definidos.",
       "runtime": "Confira conexões de corretoras e o estado de execução das operações.",
       "settings": "Configure modelos, fontes de dados e conexões de corretoras.",
-      "pixelOffice": "Planeje e atribua tarefas de pesquisa. A atribuição não inicia a execução; os cargos são rótulos e não concedem permissões de negociação."
+      "pixelOffice": "Planeje e atribua tarefas de pesquisa. A atribuição não inicia a execução; os cargos são rótulos e não concedem permissões de negociação.",
+      "marketData": "Browse market data saved for reuse in backtests."
     },
     "instructions": {
       "reports": "Primeiro peça ao assistente um backtest de uma estratégia e abra os resultados aqui. Baixe PDFs e documentos gerados no chat na conversa original.",
@@ -38,7 +39,8 @@
       "scheduled": "Informe a instrução de pesquisa, escolha a frequência e salve. O agendador local deve estar habilitado para executar tarefas; a entrega também requer um canal configurado.",
       "runtime": "Primeiro configure uma conexão de corretora em Configurações ou Carteira. As operações disponíveis dependem dos recursos da corretora e da sua autorização.",
       "settings": "Configure um modelo para começar. Adicione dados ou conexões de corretoras conforme necessário; pesquisas com dados públicos de mercado não exigem conta em corretora.",
-      "pixelOffice": "Planeje e atribua tarefas de pesquisa. A atribuição não inicia a execução; os cargos são rótulos e não concedem permissões de negociação."
+      "pixelOffice": "Planeje e atribua tarefas de pesquisa. A atribuição não inicia a execução; os cargos são rótulos e não concedem permissões de negociação.",
+      "marketData": "Historical market data is saved after completed requests. Matching requests can reuse the stored result."
     }
   },
   "layout": {
@@ -69,7 +71,8 @@
     "mainNavigation": "Navegação principal",
     "about": "Sobre",
     "sessionsLoadFailed": "Não foi possível carregar as conversas.",
-    "pixelOffice": "Escritório pixel"
+    "pixelOffice": "Escritório pixel",
+    "marketData": "Market data"
   },
   "runtime": {
     "monitorBadge": "Monitor de Runtime",
@@ -2492,5 +2495,27 @@
     "limitsNote": "Cada decisão usa uma nova conversa. Os limites são verificados após a resposta e podem exceder pelo valor dessa resposta. Uso desconhecido ou excesso aciona a parada de emergência existente.",
     "pricesNote": "Os preços são estimativas do operador. Use a maior tarifa de entrada/gravação em cache; descontos de cache e chamadas auxiliares não estão incluídos.",
     "stopToEdit": "Pare o executor antes de alterar as configurações."
+  },
+  "marketData": {
+    "badge": "Data library",
+    "title": "Market data",
+    "subtitle": "Review historical market data saved in the local database and reused by matching backtest requests.",
+    "refresh": "Refresh",
+    "datasetCount": "Saved datasets",
+    "storageUsed": "Stored data",
+    "source": "Data source",
+    "timeframe": "Interval",
+    "coverage": "Data coverage",
+    "records": "Records",
+    "size": "Database size",
+    "updated": "Last saved",
+    "ohlcv": "OHLCV candles",
+    "perpetualBundle": "Perpetual data bundle",
+    "unknown": "Unknown",
+    "loadError": "Could not load saved market data.",
+    "unavailable": "Market data inventory unavailable",
+    "retry": "Try again",
+    "emptyTitle": "No market data saved yet",
+    "emptyBody": "Historical data is added here after a data source is used for a completed request. Matching requests can reuse saved results."
   }
 }

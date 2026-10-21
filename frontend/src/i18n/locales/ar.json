@@ -22,7 +22,8 @@
       "scheduled": "كرر مهمة بحثية وفق جدول زمني.",
       "runtime": "تحقق من اتصالات الوسطاء وحالة تشغيل التداول.",
       "settings": "اضبط النماذج ومصادر البيانات واتصالات الوسطاء.",
-      "pixelOffice": "خطط لمهام البحث ووزعها. إسناد المهمة لا يبدأ تنفيذها؛ الرتب مجرد تسميات ولا تمنح صلاحيات تداول."
+      "pixelOffice": "خطط لمهام البحث ووزعها. إسناد المهمة لا يبدأ تنفيذها؛ الرتب مجرد تسميات ولا تمنح صلاحيات تداول.",
+      "marketData": "Browse market data saved for reuse in backtests."
     },
     "instructions": {
       "reports": "اطلب أولاً من المساعد اختبار استراتيجية تاريخياً، ثم افتح نتائجها هنا. نزّل ملفات PDF والمستندات المنشأة في الدردشة من المحادثة الأصلية.",
@@ -33,7 +34,8 @@
       "scheduled": "أدخل تعليمات البحث وتكراره واحفظها. يلزم تفعيل المجدول المحلي لتشغيل المهام، وإعداد قناة لإرسال النتائج.",
       "runtime": "اضبط اتصال الوسيط أولاً في الإعدادات أو صفحة المحفظة. تعتمد عمليات التداول المتاحة على قدرات الوسيط والتفويض الذي تمنحه.",
       "settings": "اضبط نموذجاً للبدء. أضف مصادر بيانات أو اتصالات وسطاء حسب المهمة؛ لا يحتاج بحث بيانات السوق العامة إلى حساب وسيط.",
-      "pixelOffice": "خطط لمهام البحث ووزعها. إسناد المهمة لا يبدأ تنفيذها؛ الرتب مجرد تسميات ولا تمنح صلاحيات تداول."
+      "pixelOffice": "خطط لمهام البحث ووزعها. إسناد المهمة لا يبدأ تنفيذها؛ الرتب مجرد تسميات ولا تمنح صلاحيات تداول.",
+      "marketData": "Historical market data is saved after completed requests. Matching requests can reuse the stored result."
     }
   },
   "layout": {
@@ -64,7 +66,8 @@
     "mainNavigation": "التنقل الرئيسي",
     "about": "حول",
     "sessionsLoadFailed": "تعذر تحميل المحادثات.",
-    "pixelOffice": "المكتب البكسلي"
+    "pixelOffice": "المكتب البكسلي",
+    "marketData": "Market data"
   },
   "runtime": {
     "monitorBadge": "مراقبة التداول",
@@ -2492,5 +2495,27 @@
     "limitsNote": "يبدأ كل قرار محادثة جديدة. تُفحص الحدود بعد الرد وقد تتجاوزها تكلفة ذلك الرد. غياب الاستخدام أو تجاوز الميزانية يفعّل مفتاح الإيقاف الحالي.",
     "pricesNote": "الأسعار تقديرات يحددها المشغّل. استخدم أعلى سعر للإدخال أو كتابة الذاكرة المؤقتة؛ لا يشمل التقدير خصوماتها أو استدعاءات النموذج المساعدة.",
     "stopToEdit": "أوقف المشغّل قبل تعديل الإعدادات."
+  },
+  "marketData": {
+    "badge": "Data library",
+    "title": "Market data",
+    "subtitle": "Review historical market data saved in the local database and reused by matching backtest requests.",
+    "refresh": "Refresh",
+    "datasetCount": "Saved datasets",
+    "storageUsed": "Stored data",
+    "source": "Data source",
+    "timeframe": "Interval",
+    "coverage": "Data coverage",
+    "records": "Records",
+    "size": "Database size",
+    "updated": "Last saved",
+    "ohlcv": "OHLCV candles",
+    "perpetualBundle": "Perpetual data bundle",
+    "unknown": "Unknown",
+    "loadError": "Could not load saved market data.",
+    "unavailable": "Market data inventory unavailable",
+    "retry": "Try again",
+    "emptyTitle": "No market data saved yet",
+    "emptyBody": "Historical data is added here after a data source is used for a completed request. Matching requests can reuse saved results."
   }
 }

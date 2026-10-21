@@ -22,7 +22,8 @@
       "scheduled": "リサーチを指定した周期で繰り返します。",
       "runtime": "ブローカーの接続と取引の稼働状況を確認します。",
       "settings": "モデル、データソース、ブローカー接続を設定します。",
-      "pixelOffice": "調査タスクを計画・割り当てます。割り当てでは実行は始まりません。役職はラベルであり、取引権限を付与しません。"
+      "pixelOffice": "調査タスクを計画・割り当てます。割り当てでは実行は始まりません。役職はラベルであり、取引権限を付与しません。",
+      "marketData": "Browse market data saved for reuse in backtests."
     },
     "instructions": {
       "reports": "まずアシスタントに戦略のバックテストを依頼し、ここで結果を開きます。会話で作成した PDF などは元の会話からダウンロードします。",
@@ -33,7 +34,8 @@
       "scheduled": "リサーチ指示と周期を入力して保存します。実行にはローカルのスケジューラーを有効にする必要があり、配信にはチャネル設定も必要です。",
       "runtime": "先に設定または保有資産ページでブローカーを接続します。利用できる取引操作はブローカーの機能とあなたの許可に依存します。",
       "settings": "まずモデルを設定します。必要に応じてデータソースやブローカー接続を追加します。公開市場のリサーチにはブローカー口座は不要です。",
-      "pixelOffice": "調査タスクを計画・割り当てます。割り当てでは実行は始まりません。役職はラベルであり、取引権限を付与しません。"
+      "pixelOffice": "調査タスクを計画・割り当てます。割り当てでは実行は始まりません。役職はラベルであり、取引権限を付与しません。",
+      "marketData": "Historical market data is saved after completed requests. Matching requests can reuse the stored result."
     }
   },
   "layout": {
@@ -64,7 +66,8 @@
     "mainNavigation": "メインナビゲーション",
     "about": "概要",
     "sessionsLoadFailed": "会話を読み込めません。",
-    "pixelOffice": "ピクセルオフィス"
+    "pixelOffice": "ピクセルオフィス",
+    "marketData": "Market data"
   },
   "runtime": {
     "monitorBadge": "取引モニター",
@@ -2492,5 +2495,27 @@
     "limitsNote": "判断ごとに新しい会話を使います。応答後に上限を確認するため、その応答分を超過する場合があります。使用量不明や超過時は既存の停止スイッチが作動します。",
     "pricesNote": "料金は利用者が設定する推定値です。入力・キャッシュ書込の最高料金を使ってください。キャッシュ割引と補助モデル呼び出しは推定に含みません。",
     "stopToEdit": "変更する前にランナーを停止してください。"
+  },
+  "marketData": {
+    "badge": "Data library",
+    "title": "Market data",
+    "subtitle": "Review historical market data saved in the local database and reused by matching backtest requests.",
+    "refresh": "Refresh",
+    "datasetCount": "Saved datasets",
+    "storageUsed": "Stored data",
+    "source": "Data source",
+    "timeframe": "Interval",
+    "coverage": "Data coverage",
+    "records": "Records",
+    "size": "Database size",
+    "updated": "Last saved",
+    "ohlcv": "OHLCV candles",
+    "perpetualBundle": "Perpetual data bundle",
+    "unknown": "Unknown",
+    "loadError": "Could not load saved market data.",
+    "unavailable": "Market data inventory unavailable",
+    "retry": "Try again",
+    "emptyTitle": "No market data saved yet",
+    "emptyBody": "Historical data is added here after a data source is used for a completed request. Matching requests can reuse saved results."
   }
 }

@@ -20,6 +20,7 @@
     "descriptions": {
       "agent": "Ask a research question or describe a strategy in your own words.",
       "reports": "Review and compare completed backtests.",
+      "marketData": "Browse market data saved for reuse in backtests.",
       "portfolio": "See balances and holdings across connected accounts.",
       "alphaZoo": "Explore stock-selection signals and evaluate their historical performance.",
       "optionsLab": "Build option strategies, explore payoff and risk, and browse US option chains.",
@@ -38,7 +39,8 @@
       "scheduled": "Enter a research instruction, choose its cadence, and save. The local scheduler must be enabled for jobs to run; delivery also needs a configured channel.",
       "runtime": "Configure a broker connection in Settings or Portfolio first. Available trading actions depend on that broker's capabilities and your authorization.",
       "settings": "Configure a model to start. Add data sources or broker connections as your task needs them; public-market research does not require a broker account.",
-      "pixelOffice": "Plan and assign research tasks. Assignment does not start execution; ranks are labels and grant no trading permissions."
+      "pixelOffice": "Plan and assign research tasks. Assignment does not start execution; ranks are labels and grant no trading permissions.",
+      "marketData": "Historical market data is saved after completed requests. Matching requests can reuse the stored result."
     }
   },
   "layout": {
@@ -47,6 +49,7 @@
     "runtime": "Trading status",
     "scheduled": "Scheduled research",
     "reports": "Backtest reports",
+    "marketData": "Market data",
     "portfolio": "Account holdings",
     "alphaZoo": "Factor research",
     "settings": "Settings",
@@ -70,6 +73,28 @@
     "about": "About",
     "sessionsLoadFailed": "Cannot load conversations.",
     "pixelOffice": "Pixel Office"
+  },
+  "marketData": {
+    "badge": "Data library",
+    "title": "Market data",
+    "subtitle": "Review historical market data saved in the local database and reused by matching backtest requests.",
+    "refresh": "Refresh",
+    "datasetCount": "Saved datasets",
+    "storageUsed": "Stored data",
+    "source": "Data source",
+    "timeframe": "Interval",
+    "coverage": "Data coverage",
+    "records": "Records",
+    "size": "Database size",
+    "updated": "Last saved",
+    "ohlcv": "OHLCV candles",
+    "perpetualBundle": "Perpetual data bundle",
+    "unknown": "Unknown",
+    "loadError": "Could not load saved market data.",
+    "unavailable": "Market data inventory unavailable",
+    "retry": "Try again",
+    "emptyTitle": "No market data saved yet",
+    "emptyBody": "Historical data is added here after a data source is used for a completed request. Matching requests can reuse saved results."
   },
   "runtime": {
     "monitorBadge": "Runtime Monitor",

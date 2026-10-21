@@ -15,6 +15,7 @@
     "descriptions": {
       "agent": "用自己的话提出研究问题，或描述要回测的策略。",
       "reports": "查看并比较已完成的回测结果。",
+      "marketData": "查看已保存并可供回测复用的行情数据。",
       "portfolio": "汇总已连接账户的资金和持仓。",
       "alphaZoo": "浏览选股信号，评测或比较其历史表现。",
       "optionsLab": "构建期权组合，观察损益与风险，并查看美股期权链。",
@@ -33,7 +34,8 @@
       "scheduled": "填写研究指令、选择执行频率并保存。任务执行需要启用本地调度服务；推送结果还需配置投递渠道。",
       "runtime": "先在设置或持仓页配置券商连接。可用的交易操作取决于该券商的能力和你的授权。",
       "settings": "初次使用先配置模型。按任务需要添加数据源或券商连接；研究公开行情无需连接券商账户。",
-      "pixelOffice": "规划和分配研究任务。分配任务不会启动执行；职级只是标签，不授予交易权限。"
+      "pixelOffice": "规划和分配研究任务。分配任务不会启动执行；职级只是标签，不授予交易权限。",
+      "marketData": "行情请求完成后，历史数据会保存在本地数据库中。后续相同请求可以直接复用。"
     }
   },
   "layout": {
@@ -42,6 +44,7 @@
     "runtime": "交易状态",
     "scheduled": "定时研究",
     "reports": "回测报告",
+    "marketData": "市场数据",
     "portfolio": "账户持仓",
     "alphaZoo": "因子研究",
     "settings": "设置",
@@ -65,6 +68,28 @@
     "about": "关于",
     "sessionsLoadFailed": "无法加载会话。",
     "pixelOffice": "像素办公室"
+  },
+  "marketData": {
+    "badge": "数据目录",
+    "title": "市场数据",
+    "subtitle": "查看本地数据库中已保存的历史行情，以及后续相同回测请求可复用的数据。",
+    "refresh": "刷新",
+    "datasetCount": "已存数据集",
+    "storageUsed": "数据占用",
+    "source": "数据来源",
+    "timeframe": "周期",
+    "coverage": "数据覆盖范围",
+    "records": "记录数",
+    "size": "数据库占用",
+    "updated": "最近保存时间",
+    "ohlcv": "OHLCV K 线",
+    "perpetualBundle": "永续合约数据包",
+    "unknown": "未知",
+    "loadError": "无法加载已存市场数据。",
+    "unavailable": "数据目录暂不可用",
+    "retry": "重试",
+    "emptyTitle": "还没有已存行情数据",
+    "emptyBody": "数据源完成历史行情请求后，数据会保存在这里。后续参数完全相同的请求可以复用已保存结果。"
   },
   "runtime": {
     "monitorBadge": "交易监控",

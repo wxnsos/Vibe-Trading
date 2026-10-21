@@ -35,7 +35,8 @@
     "mainNavigation": "Ana gezinme",
     "about": "Hakkında",
     "sessionsLoadFailed": "Konuşmalar yüklenemiyor.",
-    "pixelOffice": "Piksel Ofis"
+    "pixelOffice": "Piksel Ofis",
+    "marketData": "Market data"
   },
   "runtime": {
     "monitorBadge": "Çalışma durumu izleyicisi",
@@ -2339,7 +2340,8 @@
       "scheduled": "Bir araştırma görevini zamanlayarak tekrarlayın.",
       "runtime": "Aracı kurum bağlantılarını ve işlem çalışma durumunu kontrol edin.",
       "settings": "Modelleri, veri kaynaklarını ve aracı kurum bağlantılarını yapılandırın.",
-      "pixelOffice": "Araştırma görevlerini planlayın ve atayın. Atama yürütmeyi başlatmaz; rütbeler yalnızca etikettir ve işlem yetkisi vermez."
+      "pixelOffice": "Araştırma görevlerini planlayın ve atayın. Atama yürütmeyi başlatmaz; rütbeler yalnızca etikettir ve işlem yetkisi vermez.",
+      "marketData": "Browse market data saved for reuse in backtests."
     },
     "instructions": {
       "reports": "Önce araştırma asistanından bir stratejiyi geriye dönük test etmesini isteyin, ardından sonuçları burada açın. PDF ve diğer sohbet belgelerini özgün konuşmadan indirin.",
@@ -2350,7 +2352,8 @@
       "scheduled": "Araştırma talimatını girin, sıklığını seçip kaydedin. Çalıştırma için yerel zamanlayıcı etkin olmalıdır; gönderim için de yapılandırılmış bir kanal gerekir.",
       "runtime": "Önce Ayarlar veya Portföy’de bir aracı kurum bağlantısı kurun. Kullanılabilir işlemler, kurumun yeteneklerine ve verdiğiniz yetkiye bağlıdır.",
       "settings": "Başlamak için bir model yapılandırın. Gerektikçe veri kaynakları veya aracı kurum bağlantıları ekleyin; kamuya açık piyasa araştırması için aracı kurum hesabı gerekmez.",
-      "pixelOffice": "Araştırma görevlerini planlayın ve atayın. Atama yürütmeyi başlatmaz; rütbeler yalnızca etikettir ve işlem yetkisi vermez."
+      "pixelOffice": "Araştırma görevlerini planlayın ve atayın. Atama yürütmeyi başlatmaz; rütbeler yalnızca etikettir ve işlem yetkisi vermez.",
+      "marketData": "Historical market data is saved after completed requests. Matching requests can reuse the stored result."
     }
   },
   "analysis": {
@@ -2492,5 +2495,27 @@
     "limitsNote": "Her karar yeni bir konuşma başlatır. Sınırlar yanıttan sonra kontrol edilir ve o yanıt kadar aşılabilir. Eksik kullanım veya aşım mevcut durdurma anahtarını tetikler.",
     "pricesNote": "Fiyatlar operatör tahminidir. En yüksek girdi/önbellek yazma ücretini kullanın; önbellek indirimleri ve yardımcı çağrılar dahil değildir.",
     "stopToEdit": "Ayarları değiştirmeden önce çalıştırıcıyı durdurun."
+  },
+  "marketData": {
+    "badge": "Data library",
+    "title": "Market data",
+    "subtitle": "Review historical market data saved in the local database and reused by matching backtest requests.",
+    "refresh": "Refresh",
+    "datasetCount": "Saved datasets",
+    "storageUsed": "Stored data",
+    "source": "Data source",
+    "timeframe": "Interval",
+    "coverage": "Data coverage",
+    "records": "Records",
+    "size": "Database size",
+    "updated": "Last saved",
+    "ohlcv": "OHLCV candles",
+    "perpetualBundle": "Perpetual data bundle",
+    "unknown": "Unknown",
+    "loadError": "Could not load saved market data.",
+    "unavailable": "Market data inventory unavailable",
+    "retry": "Try again",
+    "emptyTitle": "No market data saved yet",
+    "emptyBody": "Historical data is added here after a data source is used for a completed request. Matching requests can reuse saved results."
   }
 }

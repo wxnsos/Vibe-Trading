@@ -22,7 +22,8 @@
       "scheduled": "지정한 주기로 리서치를 반복합니다.",
       "runtime": "브로커 연결과 거래 실행 상태를 확인합니다.",
       "settings": "모델, 데이터 소스, 브로커 연결을 설정합니다.",
-      "pixelOffice": "리서치 작업을 계획하고 배정합니다. 배정만으로 실행되지는 않으며, 직급은 거래 권한을 부여하지 않는 표시에 불과합니다."
+      "pixelOffice": "리서치 작업을 계획하고 배정합니다. 배정만으로 실행되지는 않으며, 직급은 거래 권한을 부여하지 않는 표시에 불과합니다.",
+      "marketData": "Browse market data saved for reuse in backtests."
     },
     "instructions": {
       "reports": "먼저 도우미에게 전략 백테스트를 요청한 후 여기에서 결과를 엽니다. 대화에서 생성한 PDF 등은 원래 대화에서 다운로드하세요.",
@@ -33,7 +34,8 @@
       "scheduled": "리서치 지시와 실행 주기를 입력하고 저장하세요. 실행하려면 로컬 스케줄러가 활성화되어 있어야 하며, 결과 전달에는 채널 설정이 필요합니다.",
       "runtime": "먼저 설정 또는 보유 자산 페이지에서 브로커를 연결하세요. 사용 가능한 거래 작업은 브로커 기능과 사용자의 승인에 따라 달라집니다.",
       "settings": "먼저 모델을 설정하세요. 필요에 따라 데이터 소스나 브로커 연결을 추가하면 됩니다. 공개 시장 리서치에는 브로커 계좌가 필요하지 않습니다.",
-      "pixelOffice": "리서치 작업을 계획하고 배정합니다. 배정만으로 실행되지는 않으며, 직급은 거래 권한을 부여하지 않는 표시에 불과합니다."
+      "pixelOffice": "리서치 작업을 계획하고 배정합니다. 배정만으로 실행되지는 않으며, 직급은 거래 권한을 부여하지 않는 표시에 불과합니다.",
+      "marketData": "Historical market data is saved after completed requests. Matching requests can reuse the stored result."
     }
   },
   "layout": {
@@ -64,7 +66,8 @@
     "mainNavigation": "주 내비게이션",
     "about": "소개",
     "sessionsLoadFailed": "대화를 불러올 수 없습니다.",
-    "pixelOffice": "픽셀 오피스"
+    "pixelOffice": "픽셀 오피스",
+    "marketData": "Market data"
   },
   "runtime": {
     "monitorBadge": "거래 모니터",
@@ -2492,5 +2495,27 @@
     "limitsNote": "결정마다 새 대화를 사용합니다. 응답 후 사용량을 확인하므로 해당 응답만큼 초과할 수 있습니다. 사용량 누락이나 예산 초과 시 기존 중지 스위치가 작동합니다.",
     "pricesNote": "요금은 운영자 추정값입니다. 입력/캐시 쓰기의 가장 높은 요금을 사용하세요. 캐시 할인과 보조 모델 호출은 추정에 포함되지 않습니다.",
     "stopToEdit": "설정을 변경하기 전에 실행기를 중지하세요."
+  },
+  "marketData": {
+    "badge": "Data library",
+    "title": "Market data",
+    "subtitle": "Review historical market data saved in the local database and reused by matching backtest requests.",
+    "refresh": "Refresh",
+    "datasetCount": "Saved datasets",
+    "storageUsed": "Stored data",
+    "source": "Data source",
+    "timeframe": "Interval",
+    "coverage": "Data coverage",
+    "records": "Records",
+    "size": "Database size",
+    "updated": "Last saved",
+    "ohlcv": "OHLCV candles",
+    "perpetualBundle": "Perpetual data bundle",
+    "unknown": "Unknown",
+    "loadError": "Could not load saved market data.",
+    "unavailable": "Market data inventory unavailable",
+    "retry": "Try again",
+    "emptyTitle": "No market data saved yet",
+    "emptyBody": "Historical data is added here after a data source is used for a completed request. Matching requests can reuse saved results."
   }
 }

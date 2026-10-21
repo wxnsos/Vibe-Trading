@@ -27,7 +27,8 @@
       "scheduled": "یک کار پژوهشی را طبق زمان‌بندی تکرار کنید.",
       "runtime": "اتصال کارگزاران و وضعیت اجرای معاملات را بررسی کنید.",
       "settings": "مدل‌ها، منابع داده و اتصال کارگزاران را تنظیم کنید.",
-      "pixelOffice": "کارهای پژوهشی را برنامه‌ریزی و واگذار کنید. واگذاری باعث شروع اجرا نمی‌شود؛ رتبه‌ها فقط برچسب هستند و مجوز معامله نمی‌دهند."
+      "pixelOffice": "کارهای پژوهشی را برنامه‌ریزی و واگذار کنید. واگذاری باعث شروع اجرا نمی‌شود؛ رتبه‌ها فقط برچسب هستند و مجوز معامله نمی‌دهند.",
+      "marketData": "Browse market data saved for reuse in backtests."
     },
     "instructions": {
       "reports": "ابتدا از دستیار پژوهش بخواهید راهبردی را پس‌آزمایی کند، سپس نتیجه را اینجا باز کنید. PDFها و سایر اسناد ساخته‌شده در گفتگو را از همان گفتگو دریافت کنید.",
@@ -38,7 +39,8 @@
       "scheduled": "دستور پژوهش و تناوب اجرا را وارد و ذخیره کنید. زمان‌بند محلی باید برای اجرای کار فعال باشد؛ ارسال نیز به کانال تنظیم‌شده نیاز دارد.",
       "runtime": "ابتدا در تنظیمات یا سبد دارایی یک اتصال کارگزاری بسازید. عملیات قابل استفاده به قابلیت‌های کارگزار و مجوز شما بستگی دارد.",
       "settings": "برای شروع یک مدل تنظیم کنید. منابع داده یا اتصال کارگزاران را بر اساس نیاز اضافه کنید؛ پژوهش با داده‌های عمومی به حساب کارگزاری نیاز ندارد.",
-      "pixelOffice": "کارهای پژوهشی را برنامه‌ریزی و واگذار کنید. واگذاری باعث شروع اجرا نمی‌شود؛ رتبه‌ها فقط برچسب هستند و مجوز معامله نمی‌دهند."
+      "pixelOffice": "کارهای پژوهشی را برنامه‌ریزی و واگذار کنید. واگذاری باعث شروع اجرا نمی‌شود؛ رتبه‌ها فقط برچسب هستند و مجوز معامله نمی‌دهند.",
+      "marketData": "Historical market data is saved after completed requests. Matching requests can reuse the stored result."
     }
   },
   "layout": {
@@ -69,7 +71,8 @@
     "mainNavigation": "ناوبری اصلی",
     "about": "درباره",
     "sessionsLoadFailed": "گفتگوها بارگذاری نمی‌شوند.",
-    "pixelOffice": "دفتر پیکسلی"
+    "pixelOffice": "دفتر پیکسلی",
+    "marketData": "Market data"
   },
   "runtime": {
     "monitorBadge": "مانیتور ران‌تایم",
@@ -2492,5 +2495,27 @@
     "limitsNote": "هر تصمیم گفت‌وگوی تازه‌ای آغاز می‌کند. سقف‌ها پس از پاسخ بررسی می‌شوند و ممکن است به اندازه آن پاسخ عبور کنند. نبود آمار مصرف یا عبور از بودجه کلید توقف موجود را فعال می‌کند.",
     "pricesNote": "نرخ‌ها برآورد اپراتورند. بالاترین نرخ ورودی/نوشتن حافظه نهان را وارد کنید؛ تخفیف حافظه نهان و فراخوانی‌های کمکی محاسبه نمی‌شوند.",
     "stopToEdit": "پیش از تغییر تنظیمات اجراکننده را متوقف کنید."
+  },
+  "marketData": {
+    "badge": "Data library",
+    "title": "Market data",
+    "subtitle": "Review historical market data saved in the local database and reused by matching backtest requests.",
+    "refresh": "Refresh",
+    "datasetCount": "Saved datasets",
+    "storageUsed": "Stored data",
+    "source": "Data source",
+    "timeframe": "Interval",
+    "coverage": "Data coverage",
+    "records": "Records",
+    "size": "Database size",
+    "updated": "Last saved",
+    "ohlcv": "OHLCV candles",
+    "perpetualBundle": "Perpetual data bundle",
+    "unknown": "Unknown",
+    "loadError": "Could not load saved market data.",
+    "unavailable": "Market data inventory unavailable",
+    "retry": "Try again",
+    "emptyTitle": "No market data saved yet",
+    "emptyBody": "Historical data is added here after a data source is used for a completed request. Matching requests can reuse saved results."
   }
 }

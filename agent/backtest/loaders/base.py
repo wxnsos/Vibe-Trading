@@ -647,13 +647,28 @@ def cached_loader_fetch(
     fetch: Callable[[], pd.DataFrame | None],
     source_revision: str | None = None,
 ) -> pd.DataFrame | None:
-    """Fetch one DataFrame through the opt-in local cache.
+    """Fetch a DataFrame through the persistent SQLite and optional Parquet caches.
 
     Convenience wrapper over :func:`loader_cache_get` / :func:`loader_cache_put`
     for the common per-symbol loader loop: return the cached frame when present,
     otherwise call ``fetch`` and cache a non-empty result. Cache read/write
     failures are non-fatal and fall back to ``fetch``.
     """
+    from src.market_data_store import MarketDataStore
+
+    try:
+        store = MarketDataStore()
+        cached = store.get(
+            source=source, symbol=symbol, timeframe=timeframe,
+            start_date=start_date, end_date=end_date, fields=fields,
+            source_revision=source_revision,
+        )
+        if cached is not None:
+            return cached
+    except Exception as exc:
+        logger.warning("market data SQLite cache unavailable; falling back to fetch: %s", exc)
+        store = None
+
     cached = loader_cache_get(
         source=source,
         symbol=symbol,
@@ -664,9 +679,23 @@ def cached_loader_fetch(
         source_revision=source_revision,
     )
     if cached is not None:
+        # Promote legacy Parquet cache hits into the durable inventory so the
+        # dataset is visible and future reads use the shared SQLite store.
+        if store is not None:
+            store.put(
+                source=source, symbol=symbol, timeframe=timeframe,
+                start_date=start_date, end_date=end_date, fields=fields,
+                source_revision=source_revision, frame=cached,
+            )
         return cached
 
     frame = fetch()
+    if store is not None:
+        store.put(
+            source=source, symbol=symbol, timeframe=timeframe,
+            start_date=start_date, end_date=end_date, fields=fields,
+            source_revision=source_revision, frame=frame,
+        )
     loader_cache_put(
         source=source,
         symbol=symbol,

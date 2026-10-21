@@ -1,9 +1,10 @@
-import { Building2, Activity, BarChart3, Bot, CalendarClock, CandlestickChart, FileText, Layers, Settings, WalletCards } from "lucide-react";
+import { Building2, Activity, BarChart3, Bot, CalendarClock, CandlestickChart, Database, FileText, Layers, Settings, WalletCards } from "lucide-react";
 
 export const NAVIGATION_GROUPS = [
   { id: "research", items: [
     { id: "agent", to: "/", icon: Bot },
     { id: "reports", to: "/reports", icon: FileText },
+    { id: "marketData", to: "/market-data", icon: Database },
     { id: "portfolio", to: "/portfolio", icon: WalletCards },
   ] },
   { id: "analysis", items: [

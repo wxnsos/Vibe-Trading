@@ -448,6 +448,16 @@ function appendQueryParam(url: string, key: string, value: string): string {
 }
 
 export const api = {
+  getMarketDataDatasets: () => request<{
+    datasets: Array<{
+      source: string; symbol: string; timeframe: string; dataset_type: string;
+      start_date: string; end_date: string; row_count: number;
+      first_timestamp: string | null; last_timestamp: string | null;
+      updated_at: string; stored_bytes: number;
+    }>;
+    dataset_count: number;
+    stored_bytes: number;
+  }>("/api/market-data/datasets"),
   getPixelOffice: () => request<OfficeSnapshot>("/api/pixel-office"),
   updatePixelOffice: (action: "create" | "assign" | "complete" | "rank", arguments_: Record<string, unknown>) =>
     request<OfficeSnapshot>("/api/pixel-office/actions", { method: "POST", body: JSON.stringify({ action, arguments: arguments_ }) }),
