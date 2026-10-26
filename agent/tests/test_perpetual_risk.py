@@ -147,6 +147,60 @@ def test_schedule_from_loader_columns_rejects_bad_payloads(payload: str, match: 
         MaintenanceSchedule.from_loader_columns("BTC/USDT:USDT", payload, "abc123")
 
 
+def test_okx_contract_tiers_convert_position_to_contract_units_and_mark_value() -> None:
+    records = [
+        {
+            "bracket_tier": 1,
+            "min_contracts": 0.0,
+            "max_contracts": 10.0,
+            "maintenance_rate": 0.01,
+            "max_leverage": 100.0,
+            "cumulative_maintenance_base": 0.0,
+        },
+        {
+            "bracket_tier": 2,
+            "min_contracts": 10.0,
+            "max_contracts": 20.0,
+            "maintenance_rate": 0.02,
+            "max_leverage": 50.0,
+            "cumulative_maintenance_base": 0.01,
+        },
+    ]
+    schedule = MaintenanceSchedule.from_loader_columns(
+        "ETH-USDT-SWAP",
+        json.dumps(records),
+        "current-tier-hash",
+        contract_size_base=0.1,
+    )
+    position = PositionState("ETH-USDT-SWAP", 1.5, 4_000.0, 5.0, 0.0, None)
+
+    assert maintenance_margin(position, 4_000.0, schedule) == pytest.approx(80.0)
+    boundary_position = PositionState("ETH-USDT-SWAP", 1.0, 4_000.0, 5.0, 0.0, None)
+    assert maintenance_margin(boundary_position, 4_000.0, schedule) == pytest.approx(40.0)
+
+
+def test_okx_contract_tier_rejects_leverage_above_tier_maximum() -> None:
+    schedule = MaintenanceSchedule.from_loader_columns(
+        "ETH-USDT-SWAP",
+        json.dumps(
+            [{
+                "bracket_tier": 1,
+                "min_contracts": 0.0,
+                "max_contracts": 10.0,
+                "maintenance_rate": 0.01,
+                "max_leverage": 4.0,
+                "cumulative_maintenance_base": 0.0,
+            }]
+        ),
+        "current-tier-hash",
+        contract_size_base=0.1,
+    )
+    position = PositionState("ETH-USDT-SWAP", 0.5, 4_000.0, 5.0, 0.0, None)
+
+    with pytest.raises(ValueError, match="exceeds tier 1 maximum"):
+        maintenance_margin(position, 4_000.0, schedule)
+
+
 def test_position_uses_signed_quantity_and_never_stores_mark_price() -> None:
     position = PositionState(
         symbol="BTC-USDT-PERP",

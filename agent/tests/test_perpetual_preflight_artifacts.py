@@ -78,7 +78,8 @@ def test_strict_fetch_attempts_public_data_without_bracket_artifact(monkeypatch)
     )
 
     assert list(result.data_map) == ["ETH-USDT-SWAP"]
-    assert received["require_brackets"] is False
+    assert received["require_brackets"] is True
+    assert received["margin_mode"] == "cross"
     assert received["bracket_artifacts"] == {}
 
 
@@ -102,3 +103,77 @@ def test_preflight_persists_normalized_data_and_names_missing_brackets(tmp_path)
     assert "maintenance_brackets" in dataset["missing_required_fields"]
     assert dataset["source_raw_response_hash"] is None
     assert report["status"] == "failed"
+
+
+def test_preflight_archives_and_validates_okx_position_tier_snapshot(tmp_path) -> None:
+    frame = _frame_without_brackets()
+    records = [
+        {
+            "bracket_tier": 1,
+            "min_contracts": 0.0,
+            "max_contracts": 100.0,
+            "maintenance_rate": 0.01,
+            "max_leverage": 100.0,
+            "cumulative_maintenance_base": 0.0,
+        }
+    ]
+    version_payload = json.dumps(
+        {
+            "instrument_id": "ETH-USDT-SWAP",
+            "margin_mode": "cross",
+            "contract_size_base": 0.1,
+            "brackets": records,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    version = hashlib.sha256(version_payload).hexdigest()[:16]
+    response_text = json.dumps(
+        {
+            "code": "0",
+            "data": [
+                {
+                    "instId": "ETH-USDT-SWAP",
+                    "tier": "1",
+                    "minSz": "0",
+                    "maxSz": "100",
+                    "mmr": "0.01",
+                    "maxLever": "100",
+                }
+            ],
+        },
+        separators=(",", ":"),
+    )
+    response_hash = hashlib.sha256(response_text.encode("utf-8")).hexdigest()
+    frame["maintenance_brackets"] = json.dumps(records, sort_keys=True, separators=(",", ":"))
+    frame["maintenance_bracket_version"] = version
+    frame["maintenance_bracket_source"] = "okx_public_position_tiers_current_snapshot"
+    frame["maintenance_bracket_observed_at"] = "2026-10-25T00:00:00+00:00"
+    frame["maintenance_bracket_margin_mode"] = "cross"
+    frame.attrs["maintenance_bracket_provenance"] = {
+        "source": "okx_public_position_tiers_current_snapshot",
+        "endpoint": "/api/v5/public/position-tiers",
+        "instrument_id": "ETH-USDT-SWAP",
+        "inst_family": "ETH-USDT",
+        "margin_mode": "cross",
+        "observed_at": "2026-10-25T00:00:00+00:00",
+        "version": version,
+        "response_text": response_text,
+        "response_sha256": response_hash,
+        "response_capture_mode": "ccxt_http_response_text",
+        "contract_size_base": 0.1,
+        "contract_amount_step": 1.0,
+        "contract_min_amount": 1.0,
+    }
+
+    runner._perpetual_preflight(_strict_config(), {"ETH-USDT-SWAP": frame}, tmp_path)
+
+    report = json.loads(
+        (tmp_path / "artifacts" / "perpetual_preflight.json").read_text(encoding="utf-8")
+    )
+    snapshot = report["datasets"]["ETH-USDT-SWAP"]["maintenance_tier_snapshot"]
+    raw_copy = tmp_path / snapshot["response_path"]
+    assert report["status"] == "passed_with_limitations"
+    assert snapshot["history_scope"] == "current snapshot applied to all bars in this run"
+    assert raw_copy.read_text(encoding="utf-8") == response_text
+    assert hashlib.sha256(raw_copy.read_bytes()).hexdigest() == response_hash

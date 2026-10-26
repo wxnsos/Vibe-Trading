@@ -165,8 +165,17 @@ class CryptoEngine(BaseEngine):
             raise ValueError(f"maintenance bracket version changed for {symbol}")
         key = (symbol, version)
         if key not in self._schedule_cache:
+            is_contract_schedule = (
+                str(bar.get("maintenance_bracket_source", ""))
+                == "okx_public_position_tiers_current_snapshot"
+            )
             self._schedule_cache[key] = MaintenanceSchedule.from_loader_columns(
-                symbol, bar["maintenance_brackets"], version
+                symbol,
+                bar["maintenance_brackets"],
+                version,
+                contract_size_base=(
+                    float(bar["contract_size_base"]) if is_contract_schedule else None
+                ),
             )
         return self._schedule_cache[key]
 
@@ -211,6 +220,15 @@ class CryptoEngine(BaseEngine):
             else:
                 funding_rate = float(rate)
                 funding_time = pd.Timestamp(settlement)
+            bracket_source = str(bar.get("maintenance_bracket_source", ""))
+            fidelity_flags = (
+                (
+                    "maintenance_tiers_are_current_snapshot",
+                    "maintenance_tier_deduction_reconstructed_from_adjacent_rates",
+                )
+                if bracket_source == "okx_public_position_tiers_current_snapshot"
+                else ()
+            )
             risks[symbol] = MarketRiskFrame(
                 timestamp=timestamp,
                 mark_open=float(bar["mark_open"]),
@@ -224,6 +242,7 @@ class CryptoEngine(BaseEngine):
                     "market_risk_source",
                     self.config.get("market_risk_source", f"ccxt:{self.config.get('ccxt_exchange', 'binance')}"),
                 )),
+                fidelity_flags=fidelity_flags,
             )
             self._market_risk_sources.add(risks[symbol].source)
         self._risk_frames = risks

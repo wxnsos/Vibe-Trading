@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
+from types import SimpleNamespace
 
 import pytest
 import pandas as pd
@@ -16,6 +18,19 @@ from backtest.loaders.ccxt_loader import (
     _validate_perpetual_candles,
 )
 from tests.loader_contract import assert_loader_contract
+
+
+@pytest.fixture(autouse=True)
+def _isolate_ccxt_loader_tests(monkeypatch) -> None:
+    """Use deterministic fake exchange responses without local cache state."""
+    class NetworkError(Exception):
+        pass
+
+    monkeypatch.setitem(sys.modules, "ccxt", SimpleNamespace(NetworkError=NetworkError))
+    monkeypatch.setattr(
+        "backtest.loaders.ccxt_loader.cached_loader_fetch",
+        lambda **kwargs: kwargs["fetch"](),
+    )
 
 
 def _hourly_rows(opens: list[float]) -> list[list[float]]:
@@ -48,7 +63,11 @@ class _PerpetualExchange:
         self.funding_rows = (
             funding_rows
             if funding_rows is not None
-            else [{"timestamp": start, "fundingRate": 0.0}]
+            else [
+                {"timestamp": start, "fundingRate": 0.0},
+                {"timestamp": start + 8 * 3_600_000, "fundingRate": 0.0},
+                {"timestamp": start + 16 * 3_600_000, "fundingRate": 0.0},
+            ]
         )
         self.calls: list[dict[str, object]] = []
 
@@ -108,6 +127,41 @@ class _PerpetualExchange:
             "limit": limit,
         })
         return self.funding_rows
+
+    def public_get_public_position_tiers(self, params):
+        self.tier_params = params
+        response = {
+            "code": "0",
+            "msg": "",
+            "data": [
+                {
+                    "instId": "ETH-USDT-SWAP",
+                    "tier": "1",
+                    "minSz": "0",
+                    "maxSz": "10",
+                    "mmr": "0.01",
+                    "maxLever": "100",
+                },
+                {
+                    "instId": "ETH-USDT-SWAP",
+                    "tier": "2",
+                    "minSz": "10",
+                    "maxSz": "20",
+                    "mmr": "0.02",
+                    "maxLever": "50",
+                },
+                {
+                    "instId": "BTC-USDT-SWAP",
+                    "tier": "1",
+                    "minSz": "0",
+                    "maxSz": "100",
+                    "mmr": "0.01",
+                    "maxLever": "100",
+                },
+            ],
+        }
+        self.last_http_response = json.dumps(response, separators=(",", ":"))
+        return response
 
 
 _DEFAULT_BRACKET_RECORDS = [
@@ -245,7 +299,7 @@ def test_perpetual_fetch_separates_execution_and_mark_prices(monkeypatch) -> Non
     assert frame["contract_size_base"].iloc[:2].tolist() == [0.01, 0.01]
     assert frame["contract_amount_step"].iloc[:2].tolist() == [1.0, 1.0]
     assert frame["contract_min_amount"].iloc[:2].tolist() == [1.0, 1.0]
-    assert frame["instrument_id"].iloc[:2].tolist() == ["BTC-USDT-SWAP"] * 2
+    assert frame["instrument_id"].iloc[:2].tolist() == ["BTC-USDT-PERP"] * 2
     assert exchange.calls[0]["symbol"] == "BTC/USDT:USDT"
     assert exchange.calls[0]["params"] is None
     assert exchange.calls[1]["params"] == {"price": "mark"}
@@ -418,6 +472,45 @@ def test_strict_perpetual_fetch_with_valid_artifact_succeeds(monkeypatch) -> Non
     assert frame["maintenance_bracket_version"].iloc[0] == artifact["content_hash"]
 
 
+def test_strict_okx_fetches_public_position_tiers_after_market_cache(monkeypatch) -> None:
+    exchange = _PerpetualExchange()
+    monkeypatch.setattr(
+        "backtest.loaders.ccxt_loader.DataLoader._get_exchange",
+        lambda _self, instrument_type="spot": exchange,
+    )
+    monkeypatch.setattr(
+        "backtest.loaders.ccxt_loader.cached_loader_fetch",
+        lambda **kwargs: kwargs["fetch"](),
+    )
+
+    from backtest.loaders.ccxt_loader import DataLoader
+
+    frame = DataLoader().fetch(
+        ["ETH-USDT-SWAP"],
+        "2024-01-01",
+        "2024-01-01",
+        interval="1H",
+        require_brackets=True,
+        margin_mode="cross",
+    )["ETH-USDT-SWAP"]
+
+    assert exchange.tier_params == {
+        "instType": "SWAP",
+        "tdMode": "cross",
+        "instFamily": "ETH-USDT",
+    }
+    records = json.loads(frame["maintenance_brackets"].iloc[0])
+    assert len(records) == 2
+    assert records[1]["max_contracts"] == 20
+    assert records[1]["cumulative_maintenance_base"] == pytest.approx(0.01)
+    assert frame["maintenance_bracket_source"].unique().tolist() == [
+        "okx_public_position_tiers_current_snapshot"
+    ]
+    assert frame.attrs["maintenance_bracket_provenance"]["response_capture_mode"] == (
+        "ccxt_http_response_text"
+    )
+
+
 def test_bracket_artifact_accepts_optional_notional_coefficient() -> None:
     records = [
         {**_DEFAULT_BRACKET_RECORDS[0], "notional_coefficient": 1.5},
@@ -484,7 +577,11 @@ def test_perpetual_fetch_rounds_funding_settlement_jitter(monkeypatch) -> None:
     missing-settlement error."""
     start = int(pd.Timestamp("2024-01-01 00:00:00").timestamp() * 1000)
     exchange = _PerpetualExchange(
-        funding_rows=[{"timestamp": start + 11, "fundingRate": 0.0003}]
+        funding_rows=[
+            {"timestamp": start + 11, "fundingRate": 0.0003},
+            {"timestamp": start + 8 * 3_600_000 + 11, "fundingRate": 0.0001},
+            {"timestamp": start + 16 * 3_600_000 + 11, "fundingRate": 0.0002},
+        ]
     )
     monkeypatch.setattr(
         "backtest.loaders.ccxt_loader.DataLoader._get_exchange",

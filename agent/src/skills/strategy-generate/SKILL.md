@@ -8,7 +8,7 @@ category: strategy
 
 1. **Requirements parsing**: parse user intent, extract instrument codes, time range, and strategy logic, then write `config.json`
 2. **Strategy design**: think through the 5 questions of data / signal / position sizing / backtest / validation
-3. **Strategy coding**: write `code/signal_engine.py` (following the `SignalEngine` contract)
+3. **Strategy coding**: implement the user's actual rules in `code/signal_engine.py` (following the `SignalEngine` contract)
 4. **Syntax check**: `bash("python -c \"import ast; ast.parse(open('code/signal_engine.py').read()); print('OK')\"")`
 5. **Run backtest**: call the `backtest` tool (built into the engine; no need to write `run_backtest.py`)
 6. **Evaluate results**: read `artifacts/metrics.csv` and judge by the review criteria
@@ -19,12 +19,18 @@ category: strategy
 For a one-off historical backtest, a research goal is optional. If `get_research_goal`
 returns `not_found`, continue by writing the requested run files and calling the
 backtest tool; do not treat the missing goal as a data, engine, or strategy error.
+When the user specifies strategy rules, never substitute an exception-raising,
+no-op, or placeholder `SignalEngine`. Implement those rules before calling
+`backtest`; the runner performs strict data preflight before it calls
+`generate()`, so valid strategy code can be present even when preflight later
+stops the run. Do not present a placeholder as the user's strategy.
 For strict perpetual runs, do not stop before the tool call just because a
-maintenance-bracket artifact was not supplied. Omit the artifact rather than
-inventing a placeholder, then call `backtest` so it can fetch and preserve the
-available public market data and return a structured preflight report naming the
-missing liquidation input. Do not report strategy performance when strict
-preflight fails.
+maintenance-bracket artifact was not supplied. For OKX `-SWAP`, the loader
+fetches the current public position-tier schedule without credentials. For
+other exchanges, omit the artifact rather than inventing one and call
+`backtest` so it can preserve available public data and report the missing
+liquidation input. Do not report strategy performance when strict preflight
+fails.
 
 ## Adapting a registered strategy
 
@@ -157,6 +163,19 @@ configured slippage; a same-bar stop blocks re-entry. Fees and slippage are
 explicit scenario assumptions unless the user supplies account-specific values.
 The generated SignalEngine still receives normalized OHLCV and must return a
 same-index signal series in `[-1, 1]`; it must not fetch data or access keys.
+
+For OKX strict runs, maintenance tiers come from the public
+`/api/v5/public/position-tiers` endpoint using the configured `tdMode` and
+instrument family. `maxSz` remains in contracts and is converted through the
+verified `ctVal` when evaluating a position; never treat it as a USDT notional
+cap. Archive the response text, content hash, observation time, instrument
+identity, margin mode, and normalized tiers in the run artifacts. OKX returns a
+current tier snapshot, not a historical tier series: apply it across the
+requested history only with that limitation stated. The cumulative tier
+deduction is reconstructed from adjacent contract caps and MMR values to keep
+maintenance margin continuous; report this model assumption. If tiers,
+contract metadata, or their provenance cannot be verified, stop strict
+preflight and do not report performance.
 
 ## Market Detection and Data Sources
 

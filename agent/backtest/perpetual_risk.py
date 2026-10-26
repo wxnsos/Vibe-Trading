@@ -43,29 +43,49 @@ def _timestamp(value: pd.Timestamp, name: str) -> pd.Timestamp:
 class MaintenanceBracket:
     """One symbol-specific maintenance-margin bracket.
 
-    Field names and semantics match the loader's bracket-artifact tier
-    records exactly (``bracket_tier``, ``notional_cap``, ``maintenance_rate``,
-    ``cumulative_maintenance_amount``, optional ``notional_coefficient``).
+    A bracket is either an amount-based schedule (``notional_cap``) or an
+    OKX contract-count schedule (``max_contracts``). The latter keeps the
+    exchange's position-size unit intact and carries the cumulative deduction
+    coefficient in base-asset units so it can be valued at each mark price.
     """
 
     bracket_tier: int
-    notional_cap: float
+    notional_cap: float | None
     maintenance_rate: float
-    cumulative_maintenance_amount: float
+    cumulative_maintenance_amount: float | None
     notional_coefficient: float | None = None
+    max_contracts: float | None = None
+    cumulative_maintenance_base: float | None = None
+    max_leverage: float | None = None
 
     def __post_init__(self) -> None:
         if self.bracket_tier < 0:
             raise ValueError("bracket_tier must be non-negative")
-        _require_finite("notional_cap", self.notional_cap, positive=True)
         _require_finite("maintenance_rate", self.maintenance_rate)
-        _require_finite(
-            "cumulative_maintenance_amount", self.cumulative_maintenance_amount
-        )
         if self.maintenance_rate < 0:
             raise ValueError("maintenance_rate must be non-negative")
-        if self.cumulative_maintenance_amount < 0:
-            raise ValueError("cumulative_maintenance_amount must be non-negative")
+        contract_mode = self.max_contracts is not None
+        if contract_mode:
+            if self.notional_cap is not None or self.cumulative_maintenance_amount is not None:
+                raise ValueError("contract tiers cannot also declare notional caps")
+            if self.cumulative_maintenance_base is None or self.max_leverage is None:
+                raise ValueError("contract tiers require cumulative deduction and max leverage")
+            _require_finite("max_contracts", self.max_contracts, positive=True)
+            _require_finite(
+                "cumulative_maintenance_base", self.cumulative_maintenance_base
+            )
+            _require_finite("max_leverage", self.max_leverage, positive=True)
+            if self.cumulative_maintenance_base < 0:
+                raise ValueError("cumulative_maintenance_base must be non-negative")
+        else:
+            if self.notional_cap is None or self.cumulative_maintenance_amount is None:
+                raise ValueError("notional tiers require a cap and cumulative amount")
+            _require_finite("notional_cap", self.notional_cap, positive=True)
+            _require_finite(
+                "cumulative_maintenance_amount", self.cumulative_maintenance_amount
+            )
+            if self.cumulative_maintenance_amount < 0:
+                raise ValueError("cumulative_maintenance_amount must be non-negative")
         if self.notional_coefficient is not None:
             _require_finite("notional_coefficient", self.notional_coefficient)
 
@@ -84,6 +104,7 @@ class MaintenanceSchedule:
     symbol: str
     version: str
     brackets: tuple[MaintenanceBracket, ...]
+    contract_size_base: float | None = None
 
     def __post_init__(self) -> None:
         if not self.symbol:
@@ -95,13 +116,34 @@ class MaintenanceSchedule:
         tiers = [bracket.bracket_tier for bracket in self.brackets]
         if tiers != sorted(tiers) or len(tiers) != len(set(tiers)):
             raise ValueError("bracket_tier values must be strictly increasing")
-        caps = [bracket.notional_cap for bracket in self.brackets]
-        if any(current <= previous for previous, current in zip(caps, caps[1:])):
-            raise ValueError("notional caps must be strictly increasing")
+        contract_mode = self.brackets[0].max_contracts is not None
+        if any((bracket.max_contracts is not None) != contract_mode for bracket in self.brackets):
+            raise ValueError("maintenance schedule cannot mix tier units")
+        if contract_mode:
+            if self.contract_size_base is None:
+                raise ValueError("contract schedule requires contract_size_base")
+            _require_finite("contract_size_base", self.contract_size_base, positive=True)
+            caps = [bracket.max_contracts for bracket in self.brackets]
+            rates = [bracket.maintenance_rate for bracket in self.brackets]
+            if any(current <= previous for previous, current in zip(caps, caps[1:])):
+                raise ValueError("contract caps must be strictly increasing")
+            if any(current < previous for previous, current in zip(rates, rates[1:])):
+                raise ValueError("maintenance rates must not decrease across contract tiers")
+        else:
+            if self.contract_size_base is not None:
+                raise ValueError("notional schedule cannot declare contract_size_base")
+            caps = [bracket.notional_cap for bracket in self.brackets]
+            if any(current <= previous for previous, current in zip(caps, caps[1:])):
+                raise ValueError("notional caps must be strictly increasing")
 
     @classmethod
     def from_loader_columns(
-        cls, symbol: str, maintenance_brackets: str, maintenance_bracket_version: str,
+        cls,
+        symbol: str,
+        maintenance_brackets: str,
+        maintenance_bracket_version: str,
+        *,
+        contract_size_base: float | None = None,
     ) -> MaintenanceSchedule:
         """Build a schedule from the loader's ``maintenance_brackets`` /
         ``maintenance_bracket_version`` DataFrame columns.
@@ -116,17 +158,47 @@ class MaintenanceSchedule:
             raise ValueError("maintenance_brackets is not valid JSON") from exc
         if not isinstance(records, list) or not records:
             raise ValueError("maintenance_brackets must be a non-empty list")
-        brackets = tuple(
-            MaintenanceBracket(
-                bracket_tier=record["bracket_tier"],
-                notional_cap=record["notional_cap"],
-                maintenance_rate=record["maintenance_rate"],
-                cumulative_maintenance_amount=record["cumulative_maintenance_amount"],
-                notional_coefficient=record.get("notional_coefficient"),
-            )
-            for record in records
+        try:
+            if "max_contracts" in records[0]:
+                brackets = tuple(
+                    MaintenanceBracket(
+                        bracket_tier=int(record["bracket_tier"]),
+                        notional_cap=None,
+                        maintenance_rate=float(record["maintenance_rate"]),
+                        cumulative_maintenance_amount=None,
+                        max_contracts=float(record["max_contracts"]),
+                        cumulative_maintenance_base=float(
+                            record["cumulative_maintenance_base"]
+                        ),
+                        max_leverage=float(record["max_leverage"]),
+                    )
+                    for record in records
+                )
+            else:
+                brackets = tuple(
+                    MaintenanceBracket(
+                        bracket_tier=int(record["bracket_tier"]),
+                        notional_cap=float(record["notional_cap"]),
+                        maintenance_rate=float(record["maintenance_rate"]),
+                        cumulative_maintenance_amount=float(
+                            record["cumulative_maintenance_amount"]
+                        ),
+                        notional_coefficient=(
+                            float(record["notional_coefficient"])
+                            if record.get("notional_coefficient") is not None
+                            else None
+                        ),
+                    )
+                    for record in records
+                )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"maintenance_brackets contain an invalid tier: {exc}") from exc
+        return cls(
+            symbol=symbol,
+            version=maintenance_bracket_version,
+            brackets=brackets,
+            contract_size_base=contract_size_base,
         )
-        return cls(symbol=symbol, version=maintenance_bracket_version, brackets=brackets)
 
 
 @dataclass(frozen=True)
@@ -185,6 +257,18 @@ def maintenance_margin(
         raise ValueError("position and schedule symbols must match")
     _require_finite("mark_price", mark_price, positive=True)
     notional = abs(position.quantity) * mark_price
+    if schedule.contract_size_base is not None:
+        contracts = abs(position.quantity) / schedule.contract_size_base
+        for bracket in schedule.brackets:
+            if contracts <= bracket.max_contracts:
+                if position.leverage > bracket.max_leverage + 1e-12:
+                    raise ValueError(
+                        f"position leverage {position.leverage:g} exceeds tier "
+                        f"{bracket.bracket_tier} maximum {bracket.max_leverage:g}"
+                    )
+                deduction = bracket.cumulative_maintenance_base * mark_price
+                return max(notional * bracket.maintenance_rate - deduction, 0.0)
+        raise ValueError("position size exceeds the final contract tier cap")
     for bracket in schedule.brackets:
         if notional <= bracket.notional_cap:
             return notional * bracket.maintenance_rate - bracket.cumulative_maintenance_amount

@@ -1324,7 +1324,7 @@ def _perpetual_preflight(config: dict, data_map: dict[str, pd.DataFrame], run_di
     import numpy as np
 
     report: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "source": "CCXT public market data; exchange identity verified as OKX",
         "instrument_type": "linear USDT-settled perpetual swap",
         "interval": str(config.get("interval", "1D")),
@@ -1341,6 +1341,8 @@ def _perpetual_preflight(config: dict, data_map: dict[str, pd.DataFrame], run_di
         "limitations": [
             "CCXT does not expose preserved raw HTTP response bytes for a raw-response SHA-256 archive.",
             "Exchange contract metadata is current metadata; historical specification changes are not reconstructed.",
+            "OKX public maintenance tiers are a timestamped current snapshot applied across the historical window; historical tier changes are not reconstructed.",
+            "OKX tier deduction is reconstructed from adjacent contract caps and maintenance rates to keep the tier schedule continuous.",
             "Trading fee and slippage values are explicit scenario assumptions, not account-specific fills.",
             "Stop-loss fills use hourly mark OHLC and configured slippage; intrabar path and queue position are unknown.",
         ],
@@ -1376,6 +1378,7 @@ def _perpetual_preflight(config: dict, data_map: dict[str, pd.DataFrame], run_di
             "source_raw_response_hash_note": (
                 "CCXT normalized responses do not expose preserved raw HTTP response bytes."
             ),
+            "maintenance_tier_snapshot": None,
         }
         report["datasets"][symbol] = dataset_report
         expected_id = symbol
@@ -1383,7 +1386,8 @@ def _perpetual_preflight(config: dict, data_map: dict[str, pd.DataFrame], run_di
             "instrument_id", "contract_unit", "contract_size_base", "contract_amount_step",
             "contract_min_amount", "execution_open", "mark_open", "mark_high", "mark_low",
             "mark_close", "funding_rate", "funding_settlement_time", "maintenance_brackets",
-            "maintenance_bracket_version",
+            "maintenance_bracket_version", "maintenance_bracket_source",
+            "maintenance_bracket_observed_at", "maintenance_bracket_margin_mode",
         }
         absent = sorted(required.difference(frame.columns))
         if absent:
@@ -1428,6 +1432,150 @@ def _perpetual_preflight(config: dict, data_map: dict[str, pd.DataFrame], run_di
                 failures.append(f"{symbol}: invalid {key}")
         if frame["maintenance_brackets"].isna().any() or frame["maintenance_bracket_version"].isna().any():
             failures.append(f"{symbol}: missing maintenance-margin schedule")
+        if "maintenance_bracket_source" in frame and set(
+            frame["maintenance_bracket_source"].astype(str)
+        ) != {"okx_public_position_tiers_current_snapshot"}:
+            failures.append(f"{symbol}: maintenance tiers are not from the OKX public position-tiers endpoint")
+        if "maintenance_bracket_margin_mode" in frame and set(
+            frame["maintenance_bracket_margin_mode"].astype(str)
+        ) != {str(config.get("margin_mode", ""))}:
+            failures.append(f"{symbol}: maintenance tier margin mode does not match the requested mode")
+        versions = set(frame["maintenance_bracket_version"].astype(str))
+        if len(versions) != 1:
+            failures.append(f"{symbol}: maintenance tier version changes within the data window")
+        observed_series = pd.to_datetime(
+            frame["maintenance_bracket_observed_at"], utc=True, errors="coerce"
+        )
+        if observed_series.isna().any() or observed_series.nunique() != 1:
+            failures.append(f"{symbol}: maintenance tier observation time changes within the data window")
+
+        bracket_values = frame["maintenance_brackets"].astype(str)
+        bracket_records: list[dict[str, Any]] | None = None
+        if bracket_values.nunique() != 1:
+            failures.append(f"{symbol}: maintenance tier payload changes within the data window")
+        else:
+            try:
+                bracket_records = json.loads(bracket_values.iloc[0])
+                if not isinstance(bracket_records, list) or not bracket_records:
+                    raise ValueError("maintenance schedule must be a non-empty list")
+                from backtest.perpetual_risk import MaintenanceSchedule
+
+                contract_snapshot = (
+                    float(frame["contract_size_base"].iloc[0])
+                    if str(frame["maintenance_bracket_source"].iloc[0])
+                    == "okx_public_position_tiers_current_snapshot"
+                    else None
+                )
+                MaintenanceSchedule.from_loader_columns(
+                    symbol,
+                    bracket_values.iloc[0],
+                    str(frame["maintenance_bracket_version"].iloc[0]),
+                    contract_size_base=contract_snapshot,
+                )
+                version_payload = json.dumps(
+                    {
+                        "instrument_id": symbol,
+                        "margin_mode": str(frame["maintenance_bracket_margin_mode"].iloc[0]),
+                        "contract_size_base": float(frame["contract_size_base"].iloc[0]),
+                        "brackets": bracket_records,
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+                computed_version = hashlib.sha256(version_payload).hexdigest()[:16]
+                if computed_version not in versions:
+                    failures.append(f"{symbol}: maintenance tier content hash does not match")
+            except (TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
+                failures.append(f"{symbol}: invalid maintenance tier schedule: {exc}")
+
+        bracket_provenance = frame.attrs.get("maintenance_bracket_provenance")
+        if isinstance(bracket_provenance, dict):
+            response_text = bracket_provenance.get("response_text")
+            if isinstance(response_text, str) and response_text:
+                response_bytes = response_text.encode("utf-8")
+                response_path = dataset_dir / f"{safe_symbol}-{symbol_digest}-position-tiers.json"
+                response_path.parent.mkdir(parents=True, exist_ok=True)
+                response_path.write_bytes(response_bytes)
+                dataset_report["maintenance_tier_snapshot"] = {
+                    "source": bracket_provenance.get("source"),
+                    "endpoint": bracket_provenance.get("endpoint"),
+                    "instrument_id": bracket_provenance.get("instrument_id"),
+                    "inst_family": bracket_provenance.get("inst_family"),
+                    "margin_mode": bracket_provenance.get("margin_mode"),
+                    "observed_at": bracket_provenance.get("observed_at"),
+                    "version": bracket_provenance.get("version"),
+                    "response_capture_mode": bracket_provenance.get("response_capture_mode"),
+                    "response_path": str(response_path.relative_to(run_dir)),
+                    "response_bytes": len(response_bytes),
+                    "response_sha256": hashlib.sha256(response_bytes).hexdigest(),
+                    "history_scope": "current snapshot applied to all bars in this run",
+                }
+                if hashlib.sha256(response_bytes).hexdigest() != bracket_provenance.get("response_sha256"):
+                    failures.append(f"{symbol}: saved maintenance response hash does not match provenance")
+                if bracket_provenance.get("source") != "okx_public_position_tiers_current_snapshot":
+                    failures.append(f"{symbol}: maintenance tier provenance source is invalid")
+                if bracket_provenance.get("endpoint") != "/api/v5/public/position-tiers":
+                    failures.append(f"{symbol}: maintenance tier provenance endpoint is invalid")
+                if bracket_provenance.get("instrument_id") != symbol:
+                    failures.append(f"{symbol}: maintenance tier provenance instrument is invalid")
+                expected_family = symbol.removesuffix("-SWAP")
+                if bracket_provenance.get("inst_family") != expected_family:
+                    failures.append(f"{symbol}: maintenance tier provenance instrument family is invalid")
+                if bracket_provenance.get("observed_at") != str(frame["maintenance_bracket_observed_at"].iloc[0]):
+                    failures.append(f"{symbol}: tier observation time does not match provenance")
+                if bracket_provenance.get("version") not in versions:
+                    failures.append(f"{symbol}: tier provenance version does not match the frame")
+                if bracket_provenance.get("margin_mode") != config.get("margin_mode"):
+                    failures.append(f"{symbol}: tier provenance margin mode does not match config")
+                for field in (
+                    "contract_size_base",
+                    "contract_amount_step",
+                    "contract_min_amount",
+                ):
+                    try:
+                        provenance_value = float(bracket_provenance[field])
+                        frame_value = float(frame[field].iloc[0])
+                    except (KeyError, TypeError, ValueError):
+                        failures.append(f"{symbol}: tier provenance is missing {field}")
+                        continue
+                    if not np.isclose(provenance_value, frame_value, rtol=1e-12, atol=1e-12):
+                        failures.append(f"{symbol}: tier provenance {field} does not match market metadata")
+                try:
+                    raw_tier_response = json.loads(response_text)
+                    if not isinstance(raw_tier_response, dict) or str(raw_tier_response.get("code")) != "0":
+                        raise ValueError("response code is not 0")
+                    raw_rows = [
+                        row for row in raw_tier_response.get("data", [])
+                        if isinstance(row, dict) and row.get("instId") == symbol
+                    ]
+                    raw_rows.sort(key=lambda row: int(row["tier"]))
+                    raw_records: list[dict[str, Any]] = []
+                    contract_size = float(frame["contract_size_base"].iloc[0])
+                    cumulative_base = 0.0
+                    previous: dict[str, float] | None = None
+                    for row in raw_rows:
+                        tier = {
+                            "bracket_tier": int(row["tier"]),
+                            "min_contracts": float(row["minSz"]),
+                            "max_contracts": float(row["maxSz"]),
+                            "maintenance_rate": float(row["mmr"]),
+                            "max_leverage": float(row["maxLever"]),
+                        }
+                        if previous is not None:
+                            cumulative_base += previous["max_contracts"] * contract_size * (
+                                tier["maintenance_rate"] - previous["maintenance_rate"]
+                            )
+                        tier["cumulative_maintenance_base"] = cumulative_base
+                        raw_records.append(tier)
+                        previous = tier
+                    if not raw_records or bracket_records is None or raw_records != bracket_records:
+                        failures.append(f"{symbol}: normalized tiers do not match the archived OKX response")
+                except (TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
+                    failures.append(f"{symbol}: archived OKX tier response is invalid: {exc}")
+            else:
+                failures.append(f"{symbol}: maintenance tier response text was not preserved")
+        else:
+            failures.append(f"{symbol}: maintenance tier provenance is missing")
         dataset_report.update({
             "contract_size_base": float(frame["contract_size_base"].iloc[0]),
             "contract_amount_step": float(frame["contract_amount_step"].iloc[0]),
@@ -1437,6 +1585,9 @@ def _perpetual_preflight(config: dict, data_map: dict[str, pd.DataFrame], run_di
             "base_quantity_per_contract": float(frame["contract_size_base"].iloc[0]),
             "funding_settlement_rows": int(frame["funding_settlement_time"].notna().sum()),
             "maintenance_bracket_version": str(frame["maintenance_bracket_version"].iloc[0]),
+            "maintenance_bracket_source": str(frame["maintenance_bracket_source"].iloc[0]),
+            "maintenance_bracket_observed_at": str(frame["maintenance_bracket_observed_at"].iloc[0]),
+            "maintenance_bracket_history_scope": "current snapshot applied to all bars in this run",
         })
     if failures:
         report["status"] = "failed"
@@ -2142,11 +2293,11 @@ def fetch_data_map(config: dict) -> DataFetchResult:
             if not all(code.strip().upper().endswith("-SWAP") for code in codes):
                 raise ValueError("perpetual_strict requires explicit -SWAP instrument IDs")
             fetch_kwargs["bracket_artifacts"] = config.get("bracket_artifacts") or {}
-            # Fetch public market/funding history even when no schedule artifact
-            # was supplied. The strict preflight persists that real dataset and
-            # then reports the missing liquidation input without running a
-            # misleading performance calculation.
-            fetch_kwargs["require_brackets"] = False
+            # The OKX adapter obtains a current public position-tier snapshot
+            # without credentials. Other exchanges still require a validated
+            # supplied artifact. Missing risk inputs fail in strict preflight.
+            fetch_kwargs["require_brackets"] = True
+            fetch_kwargs["margin_mode"] = config.get("margin_mode", "")
         data_map = loader.fetch(
             codes,
             config.get("start_date", ""),

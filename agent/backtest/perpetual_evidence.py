@@ -29,6 +29,20 @@ def build_perpetual_summary(
     liquidations = [event for event in events if event["event_type"] in liquidation_types]
     flags = sorted({flag for event in events for flag in event.get("fidelity_flags", [])})
     liquidated_positions = sum(len(event.get("symbols", [event.get("symbol")])) for event in liquidations)
+    assumptions = [
+        "single_asset_usdt",
+        "no_open_order_margin",
+        "one_way_positions",
+        "bar_extrema_order_unknown",
+        "not_an_identical_binance_liquidation_engine_reproduction",
+    ]
+    if any("okx" in source.lower() for source in market_risk_sources):
+        assumptions.extend(
+            [
+                "current_okx_maintenance_tiers_applied_to_historical_window",
+                "tier_deduction_reconstructed_from_adjacent_contract_caps_and_mmr",
+            ]
+        )
     return {
         "schema_version": SCHEMA_VERSION,
         "margin_mode": str(config.get("margin_mode", "isolated")),
@@ -55,13 +69,7 @@ def build_perpetual_summary(
         "market_risk_sources": sorted(set(market_risk_sources)),
         "fidelity_flags": flags,
         "resolution_limitation": RESOLUTION_LIMITATION,
-        "assumptions": [
-            "single_asset_usdt",
-            "no_open_order_margin",
-            "one_way_positions",
-            "bar_extrema_order_unknown",
-            "not_an_identical_binance_liquidation_engine_reproduction",
-        ],
+        "assumptions": assumptions,
     }
 
 

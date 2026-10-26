@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import time
@@ -296,6 +297,7 @@ class DataLoader:
         fields: Optional[List[str]] = None,
         bracket_artifacts: Optional[Dict[str, dict]] = None,
         require_brackets: bool = False,
+        margin_mode: str = "cross",
     ) -> Dict[str, pd.DataFrame]:
         """Fetch crypto OHLCV via CCXT.
 
@@ -309,18 +311,20 @@ class DataLoader:
                 versioned maintenance-bracket artifacts (see
                 ``_validate_bracket_artifact``) for ``-PERP`` codes. Normal
                 execution/mark/funding data never needs this — it stays
-                zero-credential regardless. This loader does not fetch brackets
-                live: ``binanceusdm.fetch_leverage_tiers()`` requires a Binance
-                API key, which this historical/backtest path never carries.
+                zero-credential regardless. OKX strict swap runs fetch the
+                current public position-tier snapshot without credentials.
             require_brackets: When True, a ``-PERP`` code without a matching,
                 valid artifact in ``bracket_artifacts`` fails closed instead of
-                silently returning data without bracket columns. Intended for
-                strict margin-risk consumers.
+                silently returning data without bracket columns. OKX strict
+                swaps use the public position-tiers endpoint.
+            margin_mode: OKX risk-tier mode, ``cross`` or ``isolated``.
 
         Returns:
             Mapping symbol -> OHLCV DataFrame.
         """
         validate_date_range(start_date, end_date)
+        if margin_mode not in {"cross", "isolated"}:
+            raise ValueError("margin_mode must be 'cross' or 'isolated'")
 
         timeframe = _INTERVAL_MAP.get(interval, "1d")
         # Build the exchange lazily so a full cache hit never imports ccxt or
@@ -364,11 +368,211 @@ class DataLoader:
                     fetch_range=fetch_window,
                 )
                 if df is not None and not df.empty:
+                    if instrument_type == "okx_swap" and require_brackets:
+                        df = self._attach_okx_position_tiers(
+                            exchange,
+                            ccxt_symbol,
+                            code,
+                            df,
+                            margin_mode=margin_mode,
+                        )
                     result[code] = df
             except Exception as exc:
                 if instrument_type in {"swap", "okx_swap"} or code.strip().upper().endswith(("-PERP", "-SWAP")):
                     raise
                 logger.warning("CCXT failed for %s: %s", code, exc)
+        return result
+
+    @staticmethod
+    def _attach_okx_position_tiers(
+        exchange,
+        symbol: str,
+        instrument_id: str,
+        frame: pd.DataFrame,
+        *,
+        margin_mode: str,
+    ) -> pd.DataFrame:
+        """Attach a fresh public OKX maintenance-tier snapshot to cached bars.
+
+        OKX ``maxSz`` is an instrument position-size limit in contracts. The
+        engine stores position size in base-asset units, so the normalized
+        schedule retains the contract cap and base amount per contract; the
+        risk model selects tiers in contract units.
+        """
+        markets = exchange.load_markets()
+        market = markets.get(symbol)
+        raw_market = (market or {}).get("info") or {}
+        if (
+            not market
+            or not market.get("swap")
+            or not market.get("linear")
+            or market.get("settle") != "USDT"
+            or raw_market.get("instId") != instrument_id
+        ):
+            raise ValueError(f"current OKX contract metadata does not match {instrument_id}")
+        try:
+            current_metadata = {
+                "contract_size_base": float(raw_market["ctVal"]),
+                "contract_amount_step": float(raw_market["lotSz"]),
+                "contract_min_amount": float(raw_market["minSz"]),
+            }
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"current OKX quantity metadata is incomplete for {instrument_id}"
+            ) from exc
+        if (
+            raw_market.get("settleCcy") != "USDT"
+            or raw_market.get("ctValCcy") != symbol.split("/")[0]
+        ):
+            raise ValueError(f"current OKX contract units are invalid for {instrument_id}")
+        for field, current_value in current_metadata.items():
+            values = pd.to_numeric(frame[field], errors="coerce")
+            if values.isna().any() or values.nunique() != 1 or not math.isclose(
+                float(values.iloc[0]), current_value, rel_tol=1e-12, abs_tol=1e-12
+            ):
+                raise ValueError(
+                    f"cached {field} differs from current OKX contract metadata for {instrument_id}"
+                )
+        contract_size = current_metadata["contract_size_base"]
+        if not all(pd.notna(value) and value > 0 for value in current_metadata.values()):
+            raise ValueError(f"invalid OKX contract quantity metadata for {instrument_id}")
+
+        family = symbol.split("/")[0] + "-USDT"
+        params = {
+            "instType": "SWAP",
+            "tdMode": margin_mode,
+            "instFamily": family,
+        }
+        request = next(
+            (
+                getattr(exchange, name, None)
+                for name in (
+                    "public_get_public_position_tiers",
+                    "publicGetPublicPositionTiers",
+                )
+                if callable(getattr(exchange, name, None))
+            ),
+            None,
+        )
+        if request is None:
+            raise ValueError("OKX public position-tiers endpoint is unavailable")
+        response = request(params)
+        if not isinstance(response, dict) or str(response.get("code")) != "0":
+            code = response.get("code") if isinstance(response, dict) else None
+            message = response.get("msg") if isinstance(response, dict) else None
+            raise ValueError(
+                f"OKX public position-tiers request failed for {instrument_id}: "
+                f"code={code!r}, message={message!r}"
+            )
+        rows = response.get("data")
+        if not isinstance(rows, list):
+            raise ValueError(f"OKX position-tiers response is malformed for {instrument_id}")
+        matched = [
+            row for row in rows
+            if isinstance(row, dict) and row.get("instId") == instrument_id
+        ]
+        if not matched:
+            raise ValueError(
+                f"OKX position-tiers response contains no exact instrument row for {instrument_id}"
+            )
+
+        parsed: list[dict] = []
+        for row in matched:
+            try:
+                tier = int(row["tier"])
+                minimum = float(row["minSz"])
+                maximum = float(row["maxSz"])
+                rate = float(row["mmr"])
+                max_leverage = float(row["maxLever"])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"OKX position tier for {instrument_id} is missing a numeric field: {exc}"
+                ) from exc
+            if (
+                tier <= 0
+                or not all(pd.notna(value) and value >= 0 for value in (minimum, rate))
+                or not all(pd.notna(value) and value > 0 for value in (maximum, max_leverage))
+                or maximum <= minimum
+            ):
+                raise ValueError(f"OKX position tier contains invalid limits for {instrument_id}")
+            parsed.append(
+                {
+                    "bracket_tier": tier,
+                    "min_contracts": minimum,
+                    "max_contracts": maximum,
+                    "maintenance_rate": rate,
+                    "max_leverage": max_leverage,
+                }
+            )
+
+        parsed.sort(key=lambda item: item["bracket_tier"])
+        if [item["bracket_tier"] for item in parsed] != list(range(1, len(parsed) + 1)):
+            raise ValueError(f"OKX position tier sequence is incomplete for {instrument_id}")
+        if any(
+            current["max_contracts"] <= previous["max_contracts"]
+            for previous, current in zip(parsed, parsed[1:])
+        ):
+            raise ValueError(f"OKX position tier caps are not strictly increasing for {instrument_id}")
+        if any(
+            current["maintenance_rate"] < previous["maintenance_rate"]
+            for previous, current in zip(parsed, parsed[1:])
+        ):
+            raise ValueError(f"OKX maintenance rates decrease across tiers for {instrument_id}")
+
+        cumulative_base = 0.0
+        for index, item in enumerate(parsed):
+            if index:
+                previous = parsed[index - 1]
+                cumulative_base += (
+                    previous["max_contracts"]
+                    * contract_size
+                    * (item["maintenance_rate"] - previous["maintenance_rate"])
+                )
+            item["cumulative_maintenance_base"] = cumulative_base
+
+        normalized = json.dumps(parsed, sort_keys=True, separators=(",", ":"))
+        version_payload = json.dumps(
+            {
+                "instrument_id": instrument_id,
+                "margin_mode": margin_mode,
+                "contract_size_base": contract_size,
+                "brackets": parsed,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        version = hashlib.sha256(version_payload).hexdigest()[:16]
+        observed_at = pd.Timestamp.now(tz="UTC").isoformat()
+
+        response_text = getattr(exchange, "last_http_response", None)
+        if isinstance(response_text, str) and response_text:
+            response_capture_mode = "ccxt_http_response_text"
+        else:
+            response_text = json.dumps(response, sort_keys=True, separators=(",", ":"))
+            response_capture_mode = "normalized_ccxt_response_json"
+        response_hash = hashlib.sha256(response_text.encode("utf-8")).hexdigest()
+
+        result = frame.copy()
+        result["maintenance_brackets"] = normalized
+        result["maintenance_bracket_version"] = version
+        result["maintenance_bracket_source"] = "okx_public_position_tiers_current_snapshot"
+        result["maintenance_bracket_observed_at"] = observed_at
+        result["maintenance_bracket_margin_mode"] = margin_mode
+        result.attrs["maintenance_bracket_provenance"] = {
+            "source": "okx_public_position_tiers_current_snapshot",
+            "endpoint": "/api/v5/public/position-tiers",
+            "instrument_id": instrument_id,
+            "inst_family": family,
+            "margin_mode": margin_mode,
+            "observed_at": observed_at,
+            "version": version,
+            "response_text": response_text,
+            "response_sha256": response_hash,
+            "response_capture_mode": response_capture_mode,
+            "contract_size_base": contract_size,
+            "contract_amount_step": current_metadata["contract_amount_step"],
+            "contract_min_amount": current_metadata["contract_min_amount"],
+        }
         return result
 
     @classmethod
@@ -378,12 +582,11 @@ class DataLoader:
     ) -> pd.DataFrame:
         """Fetch aligned trade-price and mark-price candles for one USD-M swap.
 
-        Maintenance brackets are never fetched live (see
-        ``_validate_bracket_artifact``): they're attached only when the caller
-        supplies a validated artifact. A strict caller (``require_brackets``)
-        fails closed before any network call when no artifact is supplied.
+        Non-OKX maintenance brackets are attached only when the caller
+        supplies a validated artifact. Strict OKX callers attach the current
+        public position-tier snapshot after the market-data cache lookup.
         """
-        if require_brackets and bracket_artifact is None:
+        if require_brackets and bracket_artifact is None and not is_okx:
             raise ValueError(
                 f"strict margin-risk fetch for {symbol} requires a maintenance-bracket "
                 "artifact, but none was supplied. This loader does not perform a live "
@@ -538,6 +741,7 @@ class DataLoader:
                 label=label,
             )
             if not page:
+                completed = True
                 break
             rows.extend(page)
             last_ts = int(page[-1]["timestamp"])
