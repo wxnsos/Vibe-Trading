@@ -1346,6 +1346,7 @@ def _perpetual_preflight(config: dict, data_map: dict[str, pd.DataFrame], run_di
         ],
     }
     failures: list[str] = []
+    dataset_dir = run_dir / "artifacts" / "perpetual_market_data"
     delta = {
         "1m": pd.Timedelta(minutes=1), "5m": pd.Timedelta(minutes=5),
         "15m": pd.Timedelta(minutes=15), "30m": pd.Timedelta(minutes=30),
@@ -1357,6 +1358,26 @@ def _perpetual_preflight(config: dict, data_map: dict[str, pd.DataFrame], run_di
         if frame is None or frame.empty:
             failures.append(f"{symbol}: no data")
             continue
+        normalized = frame.to_csv(index=True, lineterminator="\n").encode("utf-8")
+        safe_symbol = "".join(
+            char if char.isalnum() or char in "._-" else "_" for char in str(symbol)
+        )
+        symbol_digest = hashlib.sha256(str(symbol).encode("utf-8")).hexdigest()[:8]
+        data_path = dataset_dir / f"{safe_symbol}-{symbol_digest}.csv"
+        data_path.parent.mkdir(parents=True, exist_ok=True)
+        data_path.write_bytes(normalized)
+        dataset_report = {
+            "rows": int(len(frame)),
+            "start": frame.index[0].isoformat(),
+            "end": frame.index[-1].isoformat(),
+            "normalized_frame_sha256": hashlib.sha256(normalized).hexdigest(),
+            "normalized_frame_path": str(data_path.relative_to(run_dir)),
+            "source_raw_response_hash": None,
+            "source_raw_response_hash_note": (
+                "CCXT normalized responses do not expose preserved raw HTTP response bytes."
+            ),
+        }
+        report["datasets"][symbol] = dataset_report
         expected_id = symbol
         required = {
             "instrument_id", "contract_unit", "contract_size_base", "contract_amount_step",
@@ -1366,6 +1387,7 @@ def _perpetual_preflight(config: dict, data_map: dict[str, pd.DataFrame], run_di
         }
         absent = sorted(required.difference(frame.columns))
         if absent:
+            dataset_report["missing_required_fields"] = absent
             failures.append(f"{symbol}: missing fields {', '.join(absent)}")
             continue
         if set(frame["instrument_id"].astype(str)) != {expected_id}:
@@ -1406,14 +1428,7 @@ def _perpetual_preflight(config: dict, data_map: dict[str, pd.DataFrame], run_di
                 failures.append(f"{symbol}: invalid {key}")
         if frame["maintenance_brackets"].isna().any() or frame["maintenance_bracket_version"].isna().any():
             failures.append(f"{symbol}: missing maintenance-margin schedule")
-        normalized = frame.to_csv(index=True, lineterminator="\n").encode("utf-8")
-        report["datasets"][symbol] = {
-            "rows": int(len(frame)),
-            "start": frame.index[0].isoformat(),
-            "end": frame.index[-1].isoformat(),
-            "normalized_frame_sha256": hashlib.sha256(normalized).hexdigest(),
-            "source_raw_response_hash": None,
-            "source_raw_response_hash_note": "CCXT normalized responses do not expose preserved raw HTTP response bytes.",
+        dataset_report.update({
             "contract_size_base": float(frame["contract_size_base"].iloc[0]),
             "contract_amount_step": float(frame["contract_amount_step"].iloc[0]),
             "contract_min_amount": float(frame["contract_min_amount"].iloc[0]),
@@ -1422,7 +1437,7 @@ def _perpetual_preflight(config: dict, data_map: dict[str, pd.DataFrame], run_di
             "base_quantity_per_contract": float(frame["contract_size_base"].iloc[0]),
             "funding_settlement_rows": int(frame["funding_settlement_time"].notna().sum()),
             "maintenance_bracket_version": str(frame["maintenance_bracket_version"].iloc[0]),
-        }
+        })
     if failures:
         report["status"] = "failed"
         report["failures"] = failures
@@ -1444,7 +1459,6 @@ def _validate_perpetual_config(config: dict) -> None:
         raise ValueError("perpetual_strict requires explicit OKX -SWAP instrument IDs")
     required = (
         "initial_cash", "leverage", "taker_rate", "slippage", "stop_loss_pct",
-        "bracket_artifacts",
     )
     absent = [key for key in required if key not in config]
     if absent:
@@ -1454,8 +1468,8 @@ def _validate_perpetual_config(config: dict) -> None:
     if config.get("margin_mode") not in {"cross", "isolated"}:
         raise ValueError("perpetual_strict requires explicit margin_mode='cross' or 'isolated'")
     artifacts = config.get("bracket_artifacts")
-    if not isinstance(artifacts, dict) or any(code not in artifacts for code in codes):
-        raise ValueError("perpetual_strict requires a validated maintenance-bracket artifact for every symbol")
+    if artifacts is not None and not isinstance(artifacts, dict):
+        raise ValueError("bracket_artifacts must be a symbol-to-artifact object when supplied")
     for key in ("initial_cash", "leverage", "taker_rate", "slippage", "stop_loss_pct"):
         try:
             value = float(config[key])
@@ -2128,7 +2142,11 @@ def fetch_data_map(config: dict) -> DataFetchResult:
             if not all(code.strip().upper().endswith("-SWAP") for code in codes):
                 raise ValueError("perpetual_strict requires explicit -SWAP instrument IDs")
             fetch_kwargs["bracket_artifacts"] = config.get("bracket_artifacts") or {}
-            fetch_kwargs["require_brackets"] = True
+            # Fetch public market/funding history even when no schedule artifact
+            # was supplied. The strict preflight persists that real dataset and
+            # then reports the missing liquidation input without running a
+            # misleading performance calculation.
+            fetch_kwargs["require_brackets"] = False
         data_map = loader.fetch(
             codes,
             config.get("start_date", ""),

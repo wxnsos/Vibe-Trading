@@ -16,6 +16,16 @@ category: strategy
 
 **You only need to write `signal_engine.py` and `config.json`. The `backtest` tool automatically handles data loading and backtest execution.**
 
+For a one-off historical backtest, a research goal is optional. If `get_research_goal`
+returns `not_found`, continue by writing the requested run files and calling the
+backtest tool; do not treat the missing goal as a data, engine, or strategy error.
+For strict perpetual runs, do not stop before the tool call just because a
+maintenance-bracket artifact was not supplied. Omit the artifact rather than
+inventing a placeholder, then call `backtest` so it can fetch and preserve the
+available public market data and return a structured preflight report naming the
+missing liquidation input. Do not report strategy performance when strict
+preflight fails.
+
 ## Adapting a registered strategy
 
 1. Read `get_strategy_evidence(strategy_id="sdm:...")` for the parent's description and computed regime definitions. A stale, disabled, decayed or inadequately evidenced parent cannot be adapted.
@@ -128,15 +138,15 @@ of these fields in `config.json`:
   "leverage": 5,
   "taker_rate": 0.0005,
   "slippage": 0.0005,
-  "stop_loss_pct": 0.01,
-  "bracket_artifacts": {"ETH-USDT-SWAP": {"...": "validated artifact"}}
+  "stop_loss_pct": 0.01
 }
 ```
 
-`bracket_artifacts` cannot be invented or left empty: it is a versioned,
-validated maintenance-margin schedule supplied with the run. If it is absent,
-the backtest must be attempted so the engine returns the precise missing-input
-error, and the report must say that no reliable result was produced. Public
+When available, `bracket_artifacts` is a versioned, validated maintenance-margin
+schedule supplied with the run; never invent a placeholder. If it is absent,
+the backtest must still be attempted so the engine persists the available public
+data and returns a precise missing-input report; no reliable performance result
+is produced. Public
 OKX market history does not require API credentials. The loader verifies trade
 OHLCV, mark-price OHLCV, funding settlements, contract value, quantity step,
 and minimum contract size before a strict run proceeds.
