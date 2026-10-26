@@ -225,6 +225,27 @@ def _validate_perpetual_candles(
         raise ValueError(f"{label} candles contain invalid OHLCV rows for {symbol}")
 
 
+def _completed_candle_end(
+    end_ms: int, timeframe: str, *, now: pd.Timestamp | None = None,
+) -> pd.Timestamp:
+    """Return the exclusive end of the completed portion of a request.
+
+    OKX includes the currently forming candle in its public response. A
+    request ending on today must therefore stop at the current UTC interval
+    boundary; otherwise a full-day coverage check incorrectly demands bars
+    from the future. Requests ending in the past retain their requested end.
+    """
+    delta = _TIMEFRAME_DELTA.get(timeframe)
+    if delta is None:
+        raise ValueError(f"unsupported CCXT timeframe: {timeframe}")
+    requested_end = pd.Timestamp(end_ms, unit="ms")
+    if now is None:
+        now = pd.Timestamp.utcnow().tz_localize(None)
+    elif now.tzinfo is not None:
+        now = now.tz_localize(None)
+    return min(requested_end, now.floor(delta))
+
+
 @register
 class DataLoader:
     """CCXT-backed crypto OHLCV loader (100+ exchanges)."""
@@ -412,6 +433,12 @@ class DataLoader:
         if trade is None or mark is None or not trade.index.equals(mark.index):
             raise ValueError(f"mark-price timestamps are incomplete or unsynchronized for {symbol}")
 
+        delta = _TIMEFRAME_DELTA[timeframe]
+        effective_end = _completed_candle_end(end_ms, timeframe)
+        trade = trade.loc[trade.index < effective_end]
+        mark = mark.loc[mark.index < effective_end]
+        if trade.empty or mark.empty:
+            raise ValueError(f"no completed perpetual candles available for {symbol}")
         _validate_perpetual_candles(trade, symbol=symbol, timeframe=timeframe, label="trade-price")
         _validate_perpetual_candles(
             mark,
@@ -420,10 +447,9 @@ class DataLoader:
             label="mark-price",
             require_volume=False,
         )
-        delta = _TIMEFRAME_DELTA[timeframe]
         expected_index = pd.date_range(
             start=pd.Timestamp(since_ms, unit="ms"),
-            end=pd.Timestamp(end_ms, unit="ms") - delta,
+            end=effective_end - delta,
             freq=delta,
             name=trade.index.name,
         )

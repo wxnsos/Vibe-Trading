@@ -11,6 +11,7 @@ import pandas as pd
 from backtest.loaders.base import make_loader_cache_key
 from backtest.loaders.ccxt_loader import (
     _parse_ccxt_symbol,
+    _completed_candle_end,
     _validate_bracket_artifact,
     _validate_perpetual_candles,
 )
@@ -193,6 +194,15 @@ def test_mark_price_candles_may_omit_volume() -> None:
         label="mark-price",
         require_volume=False,
     )
+
+
+def test_completed_candle_end_clips_only_a_live_end_boundary() -> None:
+    now = pd.Timestamp("2024-01-01 02:24:00", tz="UTC")
+    end_ms = int(pd.Timestamp("2024-01-01 01:00:00", tz="UTC").timestamp() * 1000)
+    assert _completed_candle_end(end_ms, "1h", now=now) == pd.Timestamp("2024-01-01 01:00:00")
+
+    live_end_ms = int(pd.Timestamp("2024-01-01 04:00:00", tz="UTC").timestamp() * 1000)
+    assert _completed_candle_end(live_end_ms, "1h", now=now) == pd.Timestamp("2024-01-01 02:00:00")
 
 
 @pytest.mark.parametrize("code", ["BTC-PERP", "-USDT-PERP", "BTC--PERP"])
