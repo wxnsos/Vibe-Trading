@@ -99,11 +99,54 @@ Self-check after writing `signal_engine.py`:
 
 ## Cryptocurrency Notes
 
-- **Code format**: must be `XXX-USDT` (uppercase + hyphen), such as `BTC-USDT` and `ETH-USDT`
-- **source**: must be set to `"okx"`
+- **Spot code format**: `XXX-USDT` (uppercase + hyphen), such as `BTC-USDT` and `ETH-USDT`
+- **Spot source**: set to `"okx"`
 - **extra_fields**: must be `null` (OKX does not support fundamentals)
 - **Data format**: `DataLoader` has already normalized the output to match China A-shares exactly: `open, high, low, close, volume` + `DatetimeIndex`
 - **No special handling needed in strategy code**: `signal_engine.py` should be written the same way as for China A-shares; do not add extra data conversion for OKX
+
+### OKX USDT perpetuals
+
+For a perpetual contract use the exact `BASE-USDT-SWAP` code, for example
+`ETH-USDT-SWAP`. Never rewrite it to the spot code `ETH-USDT` and never use
+`source: "okx"` for a strict perpetual run; use `source: "ccxt"` so the
+runner selects the OKX swap adapter and verifies the instrument identity.
+
+When the user asks for contract-aware costs, funding, mark-price stops, or
+margin checks, set `perpetual_strict: true`. The strict contract requires all
+of these fields in `config.json`:
+
+```json
+{
+  "source": "ccxt",
+  "codes": ["ETH-USDT-SWAP"],
+  "interval": "1H",
+  "perpetual_strict": true,
+  "funding_mode": "data",
+  "margin_mode": "cross",
+  "initial_cash": 100000,
+  "leverage": 5,
+  "taker_rate": 0.0005,
+  "slippage": 0.0005,
+  "stop_loss_pct": 0.01,
+  "bracket_artifacts": {"ETH-USDT-SWAP": {"...": "validated artifact"}}
+}
+```
+
+`bracket_artifacts` cannot be invented or left empty: it is a versioned,
+validated maintenance-margin schedule supplied with the run. If it is absent,
+the backtest must be attempted so the engine returns the precise missing-input
+error, and the report must say that no reliable result was produced. Public
+OKX market history does not require API credentials. The loader verifies trade
+OHLCV, mark-price OHLCV, funding settlements, contract value, quantity step,
+and minimum contract size before a strict run proceeds.
+
+The strict runner uses the following execution approximation: signals from a
+completed bar fill at the next bar's open; stop losses use hourly mark OHLC and
+configured slippage; a same-bar stop blocks re-entry. Fees and slippage are
+explicit scenario assumptions unless the user supplies account-specific values.
+The generated SignalEngine still receives normalized OHLCV and must return a
+same-index signal series in `[-1, 1]`; it must not fetch data or access keys.
 
 ## Market Detection and Data Sources
 
@@ -113,7 +156,8 @@ Self-check after writing `signal_engine.py`:
 | `^[A-Z]+\.US$` | US stocks | yfinance | - |
 | `^\d{3,5}\.HK$` | Hong Kong stocks | yfinance | - |
 | `^[A-Z0-9&.-]+\.(TO\|V)$` | Canadian stocks (TSX / TSXV) | yahoo / yfinance | - |
-| `^[A-Z]+-USDT$` | Cryptocurrency | okx | - |
+| `^[A-Z]+-USDT$` | Cryptocurrency spot | okx | - |
+| `^[A-Z0-9]+-USDT-SWAP$` | OKX linear perpetual | ccxt | strict fields above |
 
 **`extra_fields` selection logic**: only China A-shares (`tushare`) support daily valuation fields. If the strategy needs `PE/PB/ROE` and similar daily_basic fields, specify them in `config.json.extra_fields` and `DataLoader` will retrieve them automatically. Hong Kong, US, Canadian stocks, and crypto do not support `extra_fields`.
 

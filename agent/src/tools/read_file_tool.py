@@ -35,7 +35,11 @@ _READABLE = (
     "artifacts/metrics.csv or config.json) and the bundled skill documents "
     "(skills/<skill>/...). The engine's source code is not readable here; its "
     "contracts and options are documented in the skills: load_skill(name) lists "
-    "a skill's sections, and load_skill(name, section=...) returns one."
+    "a skill's sections, and load_skill(name, section=...) returns one. For a "
+    "new backtest, config.json and code/signal_engine.py are expected to be "
+    "absent until write_file creates them; a missing file is not a capability "
+    "failure. Write the files, then call backtest(run_dir=...) so the engine "
+    "can report any actual data or cost limitation."
 )
 
 

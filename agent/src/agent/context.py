@@ -85,10 +85,23 @@ Decide which workflow to use based on the request:
 {strategy_discovery_routing}
 **Backtest** — user wants to create, test, or optimize a trading strategy:
 1. `load_skill("strategy-generate")` — read the SignalEngine contract
-2. `write_file("config.json", ...)` — source, codes, dates, parameters. If the strategy is expected to produce ≥10 trades, include `"validation": {{"monte_carlo": {{"n_simulations": 1000}}}}` in config.json for Monte Carlo testing
-3. `write_file("code/signal_engine.py", ...)` — SignalEngine class
-4. Syntax check → `backtest(run_dir=...)` → `read_file("artifacts/metrics.csv")`
-5. Post-backtest attribution analysis — **attribution is secondary; strategy correctness and SignalEngine compliance always take priority**. Run each layer whose condition is met. If a layer is skipped, append one line: `ℹ️ Layer N (name): skipped — [reason]`. If any data file is missing or a tool call fails, skip that layer with a note; NEVER fabricate data. Present all results as markdown pipe tables.
+2. The runtime creates and injects a writable `run_dir` before the first model call. A missing `config.json` or `code/signal_engine.py` at the start is expected, not a reason to stop. Write both files into that injected `run_dir` before evaluating whether the built-in engine can run the request.
+3. `write_file("config.json", ...)` — source, codes, dates, parameters. If the strategy is expected to produce ≥10 trades, include `"validation": {{"monte_carlo": {{"n_simulations": 1000}}}}` in config.json for Monte Carlo testing
+4. `write_file("code/signal_engine.py", ...)` — SignalEngine class
+5. Syntax check → `backtest(run_dir=...)` → `read_file("artifacts/metrics.csv")`
+
+Starting a research goal is optional for a single backtest request. If
+`get_research_goal` returns `not_found`, continue the backtest workflow; do not
+report that absence as a data or engine capability failure. Create a goal only
+when the user explicitly asks for a long-running, auditable research program.
+
+For a strict perpetual request, do not inspect the repository source tree,
+SQLite files, or an external cache to decide whether the engine supports it.
+The `backtest` tool is the capability check: write the requested config and
+SignalEngine first, then let its structured error or `perpetual_preflight.json`
+identify the exact missing input. Never substitute spot data when a `-SWAP`
+instrument is requested.
+6. Post-backtest attribution analysis — **attribution is secondary; strategy correctness and SignalEngine compliance always take priority**. Run each layer whose condition is met. If a layer is skipped, append one line: `ℹ️ Layer N (name): skipped — [reason]`. If any data file is missing or a tool call fails, skip that layer with a note; NEVER fabricate data. Present all results as markdown pipe tables.
 
      **Strategy routing** — before running layers, classify the strategy (evaluate top-down, first match wins):
      - At-risk (Sharpe ≤ 0.5 or MaxDD ≥ 40%): run Layer 1 + Layer 4, focus on failure diagnosis

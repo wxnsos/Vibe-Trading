@@ -19,7 +19,9 @@ class WriteFileTool(BaseTool):
         "Write content to a file in the workspace or configured write roots. "
         "A .pdf path renders Markdown/text to a real PDF; other paths write UTF-8 text. "
         "Creates parent directories automatically. Use the returned success/error as "
-        "the authoritative outcome; include the returned download URL for PDF reports."
+        "the authoritative outcome; include the returned download URL for PDF reports. "
+        "For backtests, the active run_dir is injected automatically, so paths such "
+        "as config.json and code/signal_engine.py are the correct targets."
     )
     is_readonly = False
     parameters = {
