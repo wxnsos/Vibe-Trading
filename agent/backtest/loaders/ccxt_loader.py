@@ -469,11 +469,20 @@ class DataLoader:
             raise ValueError(f"OKX position-tiers response is malformed for {instrument_id}")
         matched = [
             row for row in rows
-            if isinstance(row, dict) and row.get("instId") == instrument_id
+            if isinstance(row, dict)
+            and (
+                row.get("instId") == instrument_id
+                or (
+                    not row.get("instId")
+                    and row.get("instFamily") == family
+                    and row.get("uly") == family
+                )
+            )
         ]
         if not matched:
             raise ValueError(
-                f"OKX position-tiers response contains no exact instrument row for {instrument_id}"
+                f"OKX position-tiers response contains no exact instrument or family row "
+                f"for {instrument_id}"
             )
 
         parsed: list[dict] = []

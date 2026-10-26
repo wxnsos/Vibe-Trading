@@ -1546,7 +1546,15 @@ def _perpetual_preflight(config: dict, data_map: dict[str, pd.DataFrame], run_di
                         raise ValueError("response code is not 0")
                     raw_rows = [
                         row for row in raw_tier_response.get("data", [])
-                        if isinstance(row, dict) and row.get("instId") == symbol
+                        if isinstance(row, dict)
+                        and (
+                            row.get("instId") == symbol
+                            or (
+                                not row.get("instId")
+                                and row.get("instFamily") == expected_family
+                                and row.get("uly") == expected_family
+                            )
+                        )
                     ]
                     raw_rows.sort(key=lambda row: int(row["tier"]))
                     raw_records: list[dict[str, Any]] = []

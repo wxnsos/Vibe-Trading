@@ -135,7 +135,9 @@ class _PerpetualExchange:
             "msg": "",
             "data": [
                 {
-                    "instId": "ETH-USDT-SWAP",
+                    "instId": "",
+                    "instFamily": "ETH-USDT",
+                    "uly": "ETH-USDT",
                     "tier": "1",
                     "minSz": "0",
                     "maxSz": "10",
@@ -143,7 +145,9 @@ class _PerpetualExchange:
                     "maxLever": "100",
                 },
                 {
-                    "instId": "ETH-USDT-SWAP",
+                    "instId": "",
+                    "instFamily": "ETH-USDT",
+                    "uly": "ETH-USDT",
                     "tier": "2",
                     "minSz": "10",
                     "maxSz": "20",
@@ -151,7 +155,9 @@ class _PerpetualExchange:
                     "maxLever": "50",
                 },
                 {
-                    "instId": "BTC-USDT-SWAP",
+                    "instId": "",
+                    "instFamily": "BTC-USDT",
+                    "uly": "BTC-USDT",
                     "tier": "1",
                     "minSz": "0",
                     "maxSz": "100",
@@ -509,6 +515,50 @@ def test_strict_okx_fetches_public_position_tiers_after_market_cache(monkeypatch
     assert frame.attrs["maintenance_bracket_provenance"]["response_capture_mode"] == (
         "ccxt_http_response_text"
     )
+
+
+def test_strict_okx_rejects_family_tiers_for_another_instrument(monkeypatch) -> None:
+    exchange = _PerpetualExchange()
+
+    def mismatched_tiers(_params):
+        return {
+            "code": "0",
+            "msg": "",
+            "data": [
+                {
+                    "instId": "",
+                    "instFamily": "BTC-USDT",
+                    "uly": "BTC-USDT",
+                    "tier": "1",
+                    "minSz": "0",
+                    "maxSz": "10",
+                    "mmr": "0.01",
+                    "maxLever": "100",
+                }
+            ],
+        }
+
+    exchange.public_get_public_position_tiers = mismatched_tiers
+    monkeypatch.setattr(
+        "backtest.loaders.ccxt_loader.DataLoader._get_exchange",
+        lambda _self, instrument_type="spot": exchange,
+    )
+    monkeypatch.setattr(
+        "backtest.loaders.ccxt_loader.cached_loader_fetch",
+        lambda **kwargs: kwargs["fetch"](),
+    )
+
+    from backtest.loaders.ccxt_loader import DataLoader
+
+    with pytest.raises(ValueError, match="no exact instrument or family row"):
+        DataLoader().fetch(
+            ["ETH-USDT-SWAP"],
+            "2024-01-01",
+            "2024-01-01",
+            interval="1H",
+            require_brackets=True,
+            margin_mode="cross",
+        )
 
 
 def test_bracket_artifact_accepts_optional_notional_coefficient() -> None:

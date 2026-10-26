@@ -133,7 +133,9 @@ def test_preflight_archives_and_validates_okx_position_tier_snapshot(tmp_path) -
             "code": "0",
             "data": [
                 {
-                    "instId": "ETH-USDT-SWAP",
+                    "instId": "",
+                    "instFamily": "ETH-USDT",
+                    "uly": "ETH-USDT",
                     "tier": "1",
                     "minSz": "0",
                     "maxSz": "100",
