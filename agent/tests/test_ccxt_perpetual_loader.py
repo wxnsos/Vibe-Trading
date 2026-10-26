@@ -176,6 +176,25 @@ def test_perpetual_candle_quality_gate_rejects_gaps_and_bad_ohlc() -> None:
         _validate_perpetual_candles(frame, symbol="ETH/USDT:USDT", timeframe="1h", label="trade-price")
 
 
+def test_mark_price_candles_may_omit_volume() -> None:
+    index = pd.date_range("2024-01-01", periods=2, freq="h")
+    frame = pd.DataFrame(
+        {
+            "open": [100.0, 101.0], "high": [102.0, 103.0],
+            "low": [98.0, 99.0], "close": [101.0, 102.0],
+            "volume": [float("nan"), float("nan")],
+        },
+        index=index,
+    )
+    _validate_perpetual_candles(
+        frame,
+        symbol="ETH/USDT:USDT",
+        timeframe="1h",
+        label="mark-price",
+        require_volume=False,
+    )
+
+
 @pytest.mark.parametrize("code", ["BTC-PERP", "-USDT-PERP", "BTC--PERP"])
 def test_malformed_perpetual_symbol_is_rejected(code: str) -> None:
     with pytest.raises(ValueError, match="USD-M perpetual symbol"):

@@ -185,8 +185,14 @@ def _validate_bracket_artifact(artifact: dict, *, expected_symbol: str) -> tuple
 
 def _validate_perpetual_candles(
     frame: pd.DataFrame, *, symbol: str, timeframe: str, label: str,
+    require_volume: bool = True,
 ) -> None:
-    """Fail closed on malformed or discontinuous perpetual OHLCV series."""
+    """Fail closed on malformed or discontinuous perpetual candle series.
+
+    Trade-price candles must include a finite non-negative volume. OKX
+    mark-price candles intentionally carry no volume field; for those frames
+    only OHLC validity is checked.
+    """
     if frame.empty:
         raise ValueError(f"{label} candles are empty for {symbol}")
     if frame.index.has_duplicates:
@@ -202,16 +208,19 @@ def _validate_perpetual_candles(
         raise ValueError(
             f"{label} candles are not continuous for {symbol}; unexpected spacing at {first}"
         )
-    columns = ["open", "high", "low", "close", "volume"]
+    columns = ["open", "high", "low", "close"]
+    if require_volume:
+        columns.append("volume")
     values = frame[columns].apply(pd.to_numeric, errors="coerce")
     if values.isna().any().any() or not np.isfinite(values.to_numpy(dtype=float)).all():
         raise ValueError(f"{label} candles contain missing or non-finite OHLCV values for {symbol}")
     invalid = (
         (values["high"] < values[["open", "low", "close"]].max(axis=1))
         | (values["low"] > values[["open", "high", "close"]].min(axis=1))
-        | (values["volume"] < 0)
         | (values[["open", "high", "low", "close"]] <= 0).any(axis=1)
     )
+    if require_volume:
+        invalid |= values["volume"].lt(0)
     if invalid.any():
         raise ValueError(f"{label} candles contain invalid OHLCV rows for {symbol}")
 
@@ -404,7 +413,13 @@ class DataLoader:
             raise ValueError(f"mark-price timestamps are incomplete or unsynchronized for {symbol}")
 
         _validate_perpetual_candles(trade, symbol=symbol, timeframe=timeframe, label="trade-price")
-        _validate_perpetual_candles(mark, symbol=symbol, timeframe=timeframe, label="mark-price")
+        _validate_perpetual_candles(
+            mark,
+            symbol=symbol,
+            timeframe=timeframe,
+            label="mark-price",
+            require_volume=False,
+        )
         delta = _TIMEFRAME_DELTA[timeframe]
         expected_index = pd.date_range(
             start=pd.Timestamp(since_ms, unit="ms"),
