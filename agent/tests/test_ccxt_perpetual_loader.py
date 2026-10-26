@@ -363,6 +363,35 @@ def test_okx_swap_accepts_recorded_dynamic_settlement_time(monkeypatch) -> None:
     assert frame.loc[pd.Timestamp("2024-01-01 01:00:00"), "funding_settlement_time"] == pd.Timestamp("2024-01-01 01:00:00")
 
 
+def test_okx_swap_excludes_funding_at_exclusive_completed_bar_boundary(monkeypatch) -> None:
+    start = int(pd.Timestamp("2024-01-01 00:00:00").timestamp() * 1000)
+    boundary = pd.Timestamp("2024-01-01 23:00:00")
+    exchange = _PerpetualExchange(funding_rows=[
+        {"timestamp": start, "fundingRate": 0.0001},
+        {"timestamp": start + 8 * 3_600_000, "fundingRate": 0.0002},
+        {"timestamp": start + 16 * 3_600_000, "fundingRate": 0.0003},
+        {"timestamp": int(boundary.timestamp() * 1000), "fundingRate": 0.0004},
+    ])
+    monkeypatch.setattr(
+        "backtest.loaders.ccxt_loader.DataLoader._get_exchange",
+        lambda _self, instrument_type="spot": exchange,
+    )
+    monkeypatch.setattr(
+        "backtest.loaders.ccxt_loader._completed_candle_end",
+        lambda _end_ms, _timeframe: boundary,
+    )
+
+    from backtest.loaders.ccxt_loader import DataLoader
+
+    frame = DataLoader().fetch(
+        ["ETH-USDT-SWAP"], "2024-01-01", "2024-01-01", interval="1H"
+    )["ETH-USDT-SWAP"]
+
+    assert frame.index[-1] == pd.Timestamp("2024-01-01 22:00:00")
+    assert frame.loc[pd.Timestamp("2024-01-01 16:00:00"), "funding_rate"] == 0.0003
+    assert not frame["funding_settlement_time"].eq(boundary).any()
+
+
 def test_perpetual_fetch_rejects_missing_required_funding_settlement(monkeypatch) -> None:
     exchange = _PerpetualExchange(funding_rows=[])
     monkeypatch.setattr(

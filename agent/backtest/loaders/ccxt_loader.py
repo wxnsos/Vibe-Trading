@@ -684,7 +684,14 @@ class DataLoader:
         for column in ("open", "high", "low", "close"):
             result[f"mark_{column}"] = mark[column]
 
-        funding = cls._fetch_funding_history(exchange, symbol, since_ms, end_ms, is_okx=is_okx)
+        # The requested end date may be today. In that case the exchange can
+        # already report a settlement at the current hour boundary even
+        # though that hour's candle is still forming and was excluded above.
+        # Keep funding events on the same half-open interval as completed bars.
+        effective_end_ms = effective_end.value // 1_000_000
+        funding = cls._fetch_funding_history(
+            exchange, symbol, since_ms, effective_end_ms, is_okx=is_okx
+        )
         if funding.empty:
             start_label = pd.Timestamp(since_ms, unit="ms").strftime("%Y-%m-%d")
             end_label = (pd.Timestamp(end_ms, unit="ms") - pd.Timedelta(milliseconds=1)).strftime("%Y-%m-%d")
