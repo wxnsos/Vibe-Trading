@@ -111,6 +111,7 @@ SESSIONS_DIR = get_sessions_dir()
 # An LLM may return a transient empty completion (no text, no tool calls);
 # retry once with a nudge before failing the run on a second consecutive one.
 MAX_CONSECUTIVE_EMPTY_RESPONSE_SKIPS = 1
+MAX_BACKTEST_EXECUTION_EXTRA_ITERATIONS = 5
 
 
 
@@ -144,6 +145,7 @@ from src.agent.tool_results import (  # noqa: E402
     _normalize_tool_run_dir as _normalize_tool_run_dir,
     _previously_archived as _previously_archived,
     _archive_backtest_result as _archive_backtest_result,
+    _requires_backtest_execution as _requires_backtest_execution,
 )
 from src.agent.run_outcome import (  # noqa: E402
     OutcomeInputs,
@@ -378,6 +380,8 @@ class AgentLoop(ToolCallLifecycle):
         self._released_fallback_reason = None
         self._written_files = set()
         self._stall_reason = None
+        self._backtest_attempted = False
+        self._backtest_succeeded = False
         self._last_activity_wall = _time.time()
         self._run_done = threading.Event()
         self._called_identical = {}
@@ -428,6 +432,14 @@ class AgentLoop(ToolCallLifecycle):
         goal_turn_accounted = False
         messages = context.build_messages(llm_user_message, history)
         react_trace: List[Dict[str, Any]] = []
+        backtest_execution_required = _requires_backtest_execution(llm_user_message)
+        backtest_tool_available = self.registry.get("backtest") is not None
+        iteration_limit = self.max_iterations + (
+            MAX_BACKTEST_EXECUTION_EXTRA_ITERATIONS
+            if backtest_execution_required and backtest_tool_available
+            else 0
+        )
+        backtest_recovery_used = False
 
         trace_dir = SESSIONS_DIR / session_id if session_id else run_dir
         trace = TraceWriter(trace_dir)
@@ -469,7 +481,7 @@ class AgentLoop(ToolCallLifecycle):
         last_response_model: str | None = None
         goal_continuations = 0
         goal_last_progress: tuple[int, int] | None = None
-        wrap_up_at = max(1, int(self.max_iterations * 0.8))
+        wrap_up_at = max(1, int(iteration_limit * 0.8))
 
         # Zombie-run watchdog: fail a run that makes no forward progress
         # (no LLM completion, no tool result) for the stall timeout instead
@@ -487,7 +499,7 @@ class AgentLoop(ToolCallLifecycle):
 
         stream_failure_streak = 0
         try:
-            while iteration < self.max_iterations:
+            while iteration < iteration_limit:
                 if self._cancel_event.is_set():
                     trace.write({"type": "cancelled", "iter": self._run_iteration + 1})
                     logger.info("AgentLoop cancelled by user")
@@ -527,18 +539,18 @@ class AgentLoop(ToolCallLifecycle):
                 else:
                     self._compact_to_budget(messages, run_dir, trace, iteration, current_iter)
 
-                logger.info(f"ReAct iteration {iteration}/{self.max_iterations}")
+                logger.info(f"ReAct iteration {iteration}/{iteration_limit}")
 
                 # Inject wrap-up nudge when approaching iteration limit.
                 # Skip on the first iteration (tiny budgets) and on the last
                 # iteration (the forced text-only path already guarantees an
                 # answer there) so the nudge never displaces the active-goal
                 # context as the most recent user message.
-                if iteration == wrap_up_at and 1 < iteration < self.max_iterations:
-                    remaining = self.max_iterations - iteration
+                if iteration == wrap_up_at and 1 < iteration < iteration_limit:
+                    remaining = iteration_limit - iteration
                     wrap_content = (
                         f"[SYSTEM] You have {remaining} iterations remaining out of "
-                        f"{self.max_iterations}. Wrap up your work now: finish any "
+                        f"{iteration_limit}. Wrap up your work now: finish any "
                         "outstanding file writes or data updates that are part of your "
                         "task FIRST, while tools are still available for a few more "
                         "iterations. Do not start new analysis or re-verify data you "
@@ -563,7 +575,7 @@ class AgentLoop(ToolCallLifecycle):
                 # call tools. If the task names a target file that has not been
                 # written, force the write now so the run does not end
                 # "answered but incomplete".
-                if iteration == self.max_iterations - 1:
+                if iteration == iteration_limit - 1:
                     pending_directive = self._pending_write_directive(
                         user_message, run_started_wall
                     )
@@ -582,11 +594,17 @@ class AgentLoop(ToolCallLifecycle):
                     reasoning_interval=_reasoning_delta_min_interval_s,
                 )
 
-                # The final iteration is always text-only. A grounding correction
-                # whose validator requested no explicit recovery is text-only too:
-                # the model must revise from evidence already gathered instead of
-                # starting another research/refetch loop merely to reformat a draft.
-                is_last_iteration = (iteration == self.max_iterations)
+                # The final iteration is text-only after required backtest work
+                # has been attempted. A grounding correction without explicit
+                # recovery is also text-only so the model revises existing evidence.
+                is_last_iteration = (
+                    iteration == iteration_limit
+                    and not (
+                        backtest_execution_required
+                        and backtest_tool_available
+                        and not self._backtest_attempted
+                    )
+                )
                 correction_text_only = grounding_correction_text_only
                 tool_defs = (
                     None
@@ -814,7 +832,7 @@ class AgentLoop(ToolCallLifecycle):
                         )
                     forced_grounding_release = (
                         grounding_revisions >= MAX_GROUNDING_REVISIONS
-                        or iteration == self.max_iterations
+                        or iteration == iteration_limit
                     )
                     if not forced_grounding_release:
                         messages.append(
@@ -865,6 +883,49 @@ class AgentLoop(ToolCallLifecycle):
                         continue
                     # A real response resets the consecutive-empty counter.
                     consecutive_empty_responses = 0
+                    if (
+                        backtest_execution_required
+                        and backtest_tool_available
+                        and not self._backtest_attempted
+                        and iteration < iteration_limit
+                    ):
+                        trace.write(
+                            {
+                                "type": "required_backtest_continuation",
+                                "iter": current_iter,
+                                "reason": "model attempted to finish before calling backtest",
+                            }
+                        )
+                        if stream.streamed_chars:
+                            self._emit(
+                                "stream_reset",
+                                {
+                                    "iter": current_iter,
+                                    "reason": "required_backtest_not_attempted",
+                                },
+                            )
+                        messages.append({"role": "assistant", "content": final_content})
+                        messages.append(
+                            {
+                                "role": "system",
+                                "content": (
+                                    "[SYSTEM] The user explicitly asked to execute a historical "
+                                    "backtest, but the `backtest` tool has not been called. Do not "
+                                    "finish yet. A missing research goal or an unrelated file-read "
+                                    "error is not a backtest capability check. Follow the Backtest "
+                                    "workflow in the system instructions: create the requested "
+                                    "config and strategy in the injected run_dir, then call "
+                                    "`backtest(run_dir=...)`. If the tool returns a strict "
+                                    "preflight "
+                                    "error, stop there and report that exact blocker without "
+                                    "substituting data or inventing results."
+                                ),
+                            }
+                        )
+                        grounding_correction_text_only = False
+                        pending_grounding_draft = ""
+                        final_content = ""
+                        continue
                     # A model can answer the forced-text final iteration with its
                     # native tool-call DSL as prose (see _looks_like_tool_call_syntax).
                     # That is not an answer: retry once with a plain-text instruction,
@@ -891,7 +952,7 @@ class AgentLoop(ToolCallLifecycle):
                             }
                         )
                         final_content = ""
-                        if iteration < self.max_iterations:
+                        if iteration < iteration_limit:
                             continue
                         # No budget left: never leak the raw markup. The
                         # grounding safe-fallback talks about instrument identity,
@@ -1047,11 +1108,52 @@ class AgentLoop(ToolCallLifecycle):
                 compact_requested, focus_topic = self._process_tool_calls(
                     response.tool_calls, context, messages, trace, react_trace, current_iter,
                 )
+                if (
+                    backtest_execution_required
+                    and self._backtest_attempted
+                    and iteration == iteration_limit
+                ):
+                    iteration_limit += 1
+                    trace.write(
+                        {
+                            "type": "required_backtest_summary_iteration",
+                            "iter": current_iter,
+                        }
+                    )
 
                 if (
                     not self._cancel_event.is_set()
                     and self._tool_progress.finish_iteration()
                 ):
+                    if (
+                        backtest_execution_required
+                        and backtest_tool_available
+                        and not self._backtest_attempted
+                        and not backtest_recovery_used
+                        and iteration < iteration_limit
+                    ):
+                        backtest_recovery_used = True
+                        self._tool_progress = ToolProgress()
+                        trace.write(
+                            {
+                                "type": "required_backtest_continuation",
+                                "iter": current_iter,
+                                "reason": "repeated tool calls made no progress before backtest",
+                            }
+                        )
+                        messages.append(
+                            {
+                                "role": "system",
+                                "content": (
+                                    "[SYSTEM] The current tool path is repeating without progress, "
+                                    "and the requested `backtest` has not been attempted. Stop "
+                                    "repeating the failed lookup. Use the injected run_dir, write "
+                                    "the required config and strategy files, and call `backtest`. "
+                                    "If that tool returns a preflight error, report it and stop."
+                                ),
+                            }
+                        )
+                        continue
                     final_content = self._tool_progress.recovery_message()
                     no_progress_reason = "no_progress: " + final_content
                     trace.write(
@@ -1098,12 +1200,19 @@ class AgentLoop(ToolCallLifecycle):
                 "content": "",
                 "react_trace": react_trace,
                 "iterations": iteration,
-                "max_iterations": self.max_iterations,
+                "max_iterations": iteration_limit,
             }
 
         # Determine final status. The reason is also propagated into the
         # returned dict so SessionService can surface a meaningful UI
         # message instead of "Execution failed: unknown" (issue #114).
+        required_backtest_failure_reason = None
+        if backtest_execution_required and not self._backtest_succeeded:
+            required_backtest_failure_reason = (
+                "requested backtest was not invoked"
+                if not self._backtest_attempted
+                else "requested backtest did not complete successfully"
+            )
         outcome = resolve_final_status(
             OutcomeInputs(
                 stall_reason=self._stall_reason,
@@ -1122,7 +1231,8 @@ class AgentLoop(ToolCallLifecycle):
                 empty_model_response_iter=empty_model_response_iter,
                 empty_response_provider=self._llm_runtime.provider,
                 empty_response_model=self._llm_runtime.configured_model or "(unset)",
-                max_iterations=self.max_iterations,
+                max_iterations=iteration_limit,
+                required_backtest_failure_reason=required_backtest_failure_reason,
             )
         )
         final_reason = outcome.reason
@@ -1145,7 +1255,7 @@ class AgentLoop(ToolCallLifecycle):
             run_dir,
             react_trace,
             iteration,
-            self.max_iterations,
+            iteration_limit,
             final_content,
             self._llm_runtime,
             last_response_model,

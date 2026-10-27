@@ -826,6 +826,22 @@ class ToolCallLifecycle:
         self._last_activity_wall = _time.time()
 
         success = _is_tool_success(result)
+        if tc.name == "backtest" and update_memory:
+            self._backtest_attempted = True
+            try:
+                payload = json.loads(result)
+            except (TypeError, ValueError):
+                payload = None
+            backtest_ok = bool(
+                success
+                and isinstance(payload, dict)
+                and str(payload.get("status") or "").casefold()
+                in {"ok", "success"}
+                and payload.get("exit_code", 0) in (None, 0)
+            )
+            self._backtest_succeeded = (
+                getattr(self, "_backtest_succeeded", False) or backtest_ok
+            )
         if update_memory:
             self._tool_progress.record(
                 tc.name,

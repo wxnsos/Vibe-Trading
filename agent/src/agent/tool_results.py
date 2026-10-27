@@ -2,12 +2,12 @@
 
 Extracted verbatim from ``src/agent/loop.py`` (issue #1624, roadmap item 3:
 split ``loop.py`` along its existing seams). This module owns the module-level
-helpers that judge a finished tool call: success/failure classification of a
-JSON result envelope, detection of provider tool-call DSL left in final text,
-the user-message target-file scan, ``run_dir`` normalization, and the
-replace-not-merge archive of a successful detached backtest into the active
-run. ``loop.py`` re-exports every moved name, so existing imports keep
-working.
+helpers used by the agent loop: success/failure classification of a JSON
+result envelope, detection of provider tool-call DSL left in final text,
+explicit backtest-intent classification, the user-message target-file scan,
+``run_dir`` normalization, and the replace-not-merge archive of a successful
+detached backtest into the active run. ``loop.py`` re-exports every moved
+name, so existing imports keep working.
 
 Behavior is unchanged: every function body, docstring, and comment moved
 byte-for-byte; only the leading indentation of the module changed.
@@ -102,6 +102,37 @@ _TARGET_ACTION_RE = re.compile(
     r"|更新|创建|写|添加|修改|生成|建立|编制",
     re.IGNORECASE,
 )
+_BACKTEST_EXECUTION_RE = re.compile(
+    r"\b(?:run|execute|perform|start)\b.{0,32}\bbacktests?\b"
+    r"|(?:执行|运行|进行|开展|开始|启动|跑|做)"
+    r"(?:.{0,12})回测"
+    r"|(?:请帮我|帮我)\s*回测",
+    re.IGNORECASE,
+)
+_BACKTEST_NEGATED_PREFIX_RE = re.compile(
+    r"\b(?:do\s+not|don't|did\s+not|didn't|will\s+not|won't|"
+    r"would\s+not|wouldn't|never|stop|no\s+need\s+to|need\s+not)\s*$"
+    r"|(?:不要|不必|不需要|无需|禁止|停止|取消|不再|不希望|不想|"
+    r"未能|未|没有|没能|无法|不能|尚未)\s*(?:再|去|成功|实际|直接)?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _requires_backtest_execution(text: str) -> bool:
+    """Return whether the user explicitly asks this turn to execute a backtest.
+
+    Negation is checked against each execution phrase, rather than the whole
+    message, so a conditional stop rule does not cancel an affirmative request
+    elsewhere in the same prompt.
+    """
+    if not text:
+        return False
+    for match in _BACKTEST_EXECUTION_RE.finditer(text):
+        prefix = text[max(0, match.start() - 24) : match.start()]
+        if _BACKTEST_NEGATED_PREFIX_RE.search(prefix):
+            continue
+        return True
+    return False
 
 
 def _named_target_paths(text: str) -> list[Path]:

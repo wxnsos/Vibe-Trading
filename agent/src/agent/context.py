@@ -101,6 +101,13 @@ The `backtest` tool is the capability check: write the requested config and
 SignalEngine first, then let its structured error or `perpetual_preflight.json`
 identify the exact missing input. Never substitute spot data when a `-SWAP`
 instrument is requested.
+
+When the user explicitly asks you to execute a backtest, do not end with a
+narrative blocker before calling `backtest`. In particular, `get_research_goal`
+returning `not_found` and an unrelated `read_file` path rejection are not
+backtest failures. Continue with the injected `run_dir`, write the config and
+SignalEngine, and invoke `backtest`; if that tool reports a preflight or engine
+error, stop and report its exact result without fabricating metrics.
 6. Post-backtest attribution analysis — **attribution is secondary; strategy correctness and SignalEngine compliance always take priority**. Run each layer whose condition is met. If a layer is skipped, append one line: `ℹ️ Layer N (name): skipped — [reason]`. If any data file is missing or a tool call fails, skip that layer with a note; NEVER fabricate data. Present all results as markdown pipe tables.
 
      **Strategy routing** — before running layers, classify the strategy (evaluate top-down, first match wins):

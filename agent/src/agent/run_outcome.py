@@ -3,9 +3,9 @@
 Extracted from the tail of ``AgentLoop._run_bound`` (issue #1624, roadmap
 item 3: split ``loop.py`` along its existing seams). This module owns the
 decision ladder that maps how a run ended — stall, cancellation,
-no-progress, content-filter circuit breaker, success, empty model
-response, max iterations — onto ``(status, reason)`` plus the ``end``
-trace event and the caller-facing result dict.
+no-progress, content-filter circuit breaker, required backtest completion,
+success, empty model response, max iterations — onto ``(status, reason)``
+plus the ``end`` trace event and the caller-facing result dict.
 
 Everything here is pure: no state-store writes, no trace writes. The
 side-effectful calls (``state_store.mark_*``, ``trace.write/close``) stay
@@ -74,6 +74,9 @@ class OutcomeInputs:
             empty-response failure message.
         max_iterations: The run's iteration budget (for the failure
             message).
+        required_backtest_failure_reason: Failure reason when the user
+            explicitly requested a backtest but no successful tool result
+            was produced.
     """
 
     stall_reason: Optional[str]
@@ -89,6 +92,7 @@ class OutcomeInputs:
     empty_response_provider: str
     empty_response_model: str
     max_iterations: int
+    required_backtest_failure_reason: Optional[str] = None
 
 
 @dataclass
@@ -137,6 +141,10 @@ def resolve_final_status(inputs: OutcomeInputs) -> RunOutcome:
             "responses were blocked by content moderation"
         )
         return RunOutcome("failed", reason, "failure", False)
+    if inputs.required_backtest_failure_reason is not None:
+        return RunOutcome(
+            "failed", inputs.required_backtest_failure_reason, "failure", False
+        )
     if inputs.has_output:
         if inputs.released_fallback:
             reason = inputs.released_fallback_reason or (
