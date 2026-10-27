@@ -61,6 +61,15 @@ def test_failed_run_records_state_failed_with_exit_code(tool_run_dir):
     assert state == {"status": "failed", "reason": "backtest engine exited with code 3"}
 
 
+def test_failed_run_exposes_signal_diagnostic(tool_run_dir):
+    envelope = _run_with_result(tool_run_dir, _FakeRunResult(success=False, exit_code=-9))
+
+    assert envelope["error"] == (
+        "backtest engine terminated by SIGKILL (9); "
+        "the host or container may have terminated it (check memory and resource limits)"
+    )
+
+
 def test_validation_error_records_no_state(tool_run_dir):
     (tool_run_dir / "config.json").unlink()
 

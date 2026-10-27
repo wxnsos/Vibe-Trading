@@ -839,6 +839,20 @@ class ToolCallLifecycle:
                 in {"ok", "success"}
                 and payload.get("exit_code", 0) in (None, 0)
             )
+            if not backtest_ok:
+                detail = ""
+                if isinstance(payload, dict):
+                    detail = str(
+                        payload.get("error")
+                        or payload.get("stderr")
+                        or payload.get("message")
+                        or ""
+                    ).strip()
+                    if not detail and payload.get("exit_code") is not None:
+                        detail = f"exit_code={payload.get('exit_code')}"
+                self._backtest_failure_reason = (
+                    detail[:500] or "backtest tool returned an error"
+                )
             self._backtest_succeeded = (
                 getattr(self, "_backtest_succeeded", False) or backtest_ok
             )

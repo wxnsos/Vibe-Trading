@@ -382,6 +382,7 @@ class AgentLoop(ToolCallLifecycle):
         self._stall_reason = None
         self._backtest_attempted = False
         self._backtest_succeeded = False
+        self._backtest_failure_reason: str | None = None
         self._last_activity_wall = _time.time()
         self._run_done = threading.Event()
         self._called_identical = {}
@@ -1211,7 +1212,12 @@ class AgentLoop(ToolCallLifecycle):
             required_backtest_failure_reason = (
                 "requested backtest was not invoked"
                 if not self._backtest_attempted
-                else "requested backtest did not complete successfully"
+                else (
+                    "requested backtest did not complete successfully: "
+                    f"{self._backtest_failure_reason}"
+                    if self._backtest_failure_reason
+                    else "requested backtest did not complete successfully"
+                )
             )
         outcome = resolve_final_status(
             OutcomeInputs(

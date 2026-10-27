@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import signal
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -281,7 +282,7 @@ def run_backtest(run_dir: str) -> str:
     if result.success:
         state_store.mark_success(run_path)
     else:
-        state_store.mark_failure(run_path, f"backtest engine exited with code {result.exit_code}")
+        state_store.mark_failure(run_path, _process_failure_message(result.exit_code))
 
     bench_record = _record_bench_if_declared(config, run_path, success=result.success)
 
@@ -306,7 +307,28 @@ def run_backtest(run_dir: str) -> str:
         summary = try_build_backtest_summary(run_path, ohlcv_paths)
         if summary is not None:
             envelope["summary"] = summary
+    if not result.success:
+        envelope["error"] = _process_failure_message(result.exit_code)
     return _serialize_result(envelope)
+
+
+def _process_failure_message(exit_code: int | None) -> str:
+    """Describe a backtest subprocess that exited unsuccessfully."""
+    if exit_code is None:
+        return "backtest engine exited without a status code"
+    if exit_code < 0:
+        number = -exit_code
+        try:
+            name = signal.Signals(number).name
+        except ValueError:
+            name = f"signal {number}"
+        hint = (
+            "; the host or container may have terminated it (check memory and resource limits)"
+            if number == getattr(signal, "SIGKILL", 9)
+            else ""
+        )
+        return f"backtest engine terminated by {name} ({number}){hint}"
+    return f"backtest engine exited with code {exit_code}"
 
 
 def _serialize_result(envelope: dict[str, Any]) -> str:

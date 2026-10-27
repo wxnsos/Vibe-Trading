@@ -119,7 +119,10 @@ def test_backtest_preflight_error_remains_a_failed_run(tmp_path: Path) -> None:
 
     assert tool.calls == 1
     assert result["status"] == "failed"
-    assert result["reason"] == "requested backtest did not complete successfully"
+    assert result["reason"] == (
+        "requested backtest did not complete successfully: "
+        "missing maintenance brackets"
+    )
     assert "missing maintenance brackets" in result["content"]
 
 
