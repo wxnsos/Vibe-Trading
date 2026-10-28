@@ -539,6 +539,11 @@ class Runner:
                 "PYTHONUNBUFFERED": "1",
                 "PYTHONIOENCODING": "utf-8",
                 "PYTHONUTF8": "1",
+                # The backtest entry point must not rediscover dotenv files
+                # from its working directory after this runner has dropped
+                # privileges. Only the allowlisted variables copied above
+                # are available to the generated-code subprocess.
+                "VIBE_TRADING_ISOLATED_BACKTEST_CHILD": "1",
             }
         )
 

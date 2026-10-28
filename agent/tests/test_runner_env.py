@@ -56,6 +56,7 @@ def test_backtest_runtime_env_keeps_market_data_configuration(
     assert env["PYTHONUNBUFFERED"] == "1"
     assert env["PYTHONIOENCODING"] == "utf-8"
     assert env["PYTHONUTF8"] == "1"
+    assert env["VIBE_TRADING_ISOLATED_BACKTEST_CHILD"] == "1"
 
 
 def test_backtest_runtime_env_scrubs_service_and_broker_secrets(

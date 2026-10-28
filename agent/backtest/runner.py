@@ -15,6 +15,7 @@ import importlib.util
 import inspect
 import json
 import logging
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -61,6 +62,18 @@ _VALID_ENGINES = {"daily", "options"}
 _PRICE_PANEL_COLUMNS = ("open", "high", "low", "close", "volume", "vwap", "amount")
 _FUND_PREFIX = "fund:"
 _VAL_PREFIX = "val:"
+_ISOLATED_BACKTEST_CHILD_ENV = "VIBE_TRADING_ISOLATED_BACKTEST_CHILD"
+
+
+def _load_dotenv_for_execution() -> None:
+    """Load dotenv only for trusted direct invocations, never in the sandbox."""
+    if os.environ.get(_ISOLATED_BACKTEST_CHILD_ENV) == "1":
+        return
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return
+    load_dotenv()
 
 
 @dataclass(frozen=True)
@@ -1655,18 +1668,13 @@ def main(run_dir: Path) -> None:
             file is read so an arbitrary filesystem location cannot be used
             to source ``code/signal_engine.py``.
     """
-    # Loading `.env` belongs to the process that RUNS a backtest, not to
-    # importing this module. At import time it ran during pytest collection --
-    # before the per-test os.environ snapshot exists -- so a developer's own
-    # LANGCHAIN_MODEL_NAME leaked into every later test and could not be undone
-    # by any fixture, which is how seven redaction tests failed locally while
-    # CI (with no .env checked out) stayed green.
-    try:
-        from dotenv import load_dotenv
-
-        load_dotenv()
-    except ImportError:
-        pass
+    # Direct CLI runs may load dotenv. Runner.execute() already provides the
+    # isolated child with its approved environment and a temporary HOME; do not
+    # search the project working directory for a private .env file here. In a
+    # hardened Docker deployment that file is intentionally unreadable by the
+    # unprivileged backtest UID, and attempting to read it aborts before the
+    # engine can start.
+    _load_dotenv_for_execution()
 
     # Guard the CLI entry point with the same root whitelist the MCP
     # ``backtest`` tool already uses (src/tools/backtest_tool.py:23). Without
