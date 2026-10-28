@@ -140,8 +140,12 @@ def _default_file_roots() -> list[Path]:
 
 def _default_run_roots() -> list[Path]:
     """Return default roots for generated backtest/tool run directories."""
-    from src.config.paths import get_runtime_root
-    from src.swarm.store import swarm_runs_root
+    # Import the path helper directly. Importing ``src.swarm.store`` first
+    # executes ``src.swarm.__init__``, which eagerly imports the MCP client;
+    # fastmcp's settings then scans ``.env`` before the isolated backtest can
+    # establish its safe environment. The path is the same single source used
+    # by ``swarm_runs_root`` without importing the whole swarm runtime.
+    from src.config.paths import get_runtime_root, get_swarm_runs_dir
 
     cwd = Path.cwd().resolve()
     home = Path.home().resolve()
@@ -150,7 +154,7 @@ def _default_run_roots() -> list[Path]:
     return [
         agent_root / "runs",
         agent_root / ".swarm" / "runs",  # un-migrated legacy swarm runs
-        swarm_runs_root(),
+        get_swarm_runs_dir(),
         cwd / "runs",
         home / ".vibe-trading" / "shadow_runs",
         home / ".vibe-trading" / "runs",
